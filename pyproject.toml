@@ -1,0 +1,30 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "aliexpress-pinterest-bot"
+version = "1.0.0"
+description = "Auto-create Pinterest pins from AliExpress affiliate products using AI-generated descriptions"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27.0",
+    "openai>=1.30.0",
+    "google-generativeai>=0.7.0",
+    "python-dotenv>=1.0.0",
+    "rich>=13.7.0",
+    "click>=8.1.0",
+]
+
+[project.scripts]
+ae-pinner = "ae_pinner.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ae_pinner"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
