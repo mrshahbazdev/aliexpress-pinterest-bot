@@ -31,6 +31,13 @@ class Config:
     pin_ship_to: str = "US"
     pin_currency: str = "USD"
 
+    # Database
+    db_host: str = ""
+    db_port: int = 3306
+    db_name: str = ""
+    db_user: str = ""
+    db_password: str = ""
+
     @classmethod
     def load(cls, env_path: str | Path | None = None) -> "Config":
         """Load configuration from .env file and environment variables."""
@@ -50,6 +57,11 @@ class Config:
             pin_language=os.getenv("PIN_LANGUAGE", "en"),
             pin_ship_to=os.getenv("PIN_SHIP_TO", "US"),
             pin_currency=os.getenv("PIN_CURRENCY", "USD"),
+            db_host=os.getenv("DB_HOST", ""),
+            db_port=int(os.getenv("DB_PORT", "3306")),
+            db_name=os.getenv("DB_NAME", ""),
+            db_user=os.getenv("DB_USER", ""),
+            db_password=os.getenv("DB_PASSWORD", ""),
         )
 
     def validate(self) -> list[str]:

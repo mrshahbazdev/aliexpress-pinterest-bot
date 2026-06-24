@@ -39,7 +39,7 @@ def main():
 @click.option("--dry-run", is_flag=True, help="Preview without creating pins on Pinterest")
 @click.option("--env-file", default=None, help="Path to .env file")
 def run(page: int, count: int, ai: str, dry_run: bool, env_file: str | None):
-    """Run the bot: fetch products → AI descriptions → create pins."""
+    """Run the bot: fetch products -> AI descriptions -> create pins."""
     config = Config.load(env_file)
     missing = config.validate()
 
@@ -53,7 +53,7 @@ def run(page: int, count: int, ai: str, dry_run: bool, env_file: str | None):
     ai_provider = AIProvider.OPENAI if ai == "openai" else AIProvider.GEMINI
 
     console.print(
-        f"[bold]AliExpress → Pinterest Pin Bot[/]\n"
+        f"[bold]AliExpress -> Pinterest Pin Bot[/]\n"
         f"  AI Provider: [cyan]{ai_provider.value}[/]\n"
         f"  Page: {page} | Count: {count}\n"
         f"  Dry Run: {'Yes' if dry_run else 'No'}",
@@ -74,8 +74,7 @@ def run(page: int, count: int, ai: str, dry_run: bool, env_file: str | None):
         console.print(f"\n[bold green]Done! {result.pins_created} pins created.[/]")
     elif dry_run:
         console.print(
-            f"\n[bold yellow]Dry run complete. "
-            f"{result.total_products} products ready.[/]"
+            f"\n[bold yellow]Dry run complete. {result.total_products} products ready.[/]"
         )
     else:
         console.print("\n[bold red]No pins were created.[/]")
@@ -145,6 +144,81 @@ def verify(env_file: str | None):
             console.print("  AI Provider: [red]No API key set[/]")
 
     asyncio.run(_verify())
+
+    # Check Database
+    if config.db_host:
+        from ae_pinner.database import Database
+
+        try:
+            db = Database(
+                host=config.db_host,
+                port=config.db_port,
+                name=config.db_name,
+                user=config.db_user,
+                password=config.db_password,
+            )
+            db.init_tables()
+            stats = db.get_stats()
+            console.print(f"  Database: [green]OK[/] ({stats['total']} products stored)")
+        except Exception as e:
+            console.print(f"  Database: [red]FAILED[/] ({e})")
+    else:
+        console.print("  Database: [yellow]SKIPPED (no DB_HOST)[/]")
+
+
+@main.command()
+@click.option("--host", default="0.0.0.0", help="Host to bind the web server to")
+@click.option("--port", default=5000, help="Port for the web server")
+@click.option("--env-file", default=None, help="Path to .env file")
+@click.option("--debug", is_flag=True, help="Run in debug mode")
+def web(host: str, port: int, env_file: str | None, debug: bool):
+    """Start the web UI for managing products and Pinterest content."""
+    from ae_pinner.web import init_app
+
+    config = Config.load(env_file)
+
+    if not config.db_host:
+        console.print("[red]Database configuration required for web UI.[/]")
+        console.print("Set DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD in .env")
+        sys.exit(1)
+
+    console.print(
+        f"[bold]Starting Web UI[/]\n"
+        f"  URL: http://{host}:{port}\n"
+        f"  Database: {config.db_host}:{config.db_port}/{config.db_name}",
+        highlight=False,
+    )
+
+    flask_app = init_app(config)
+    flask_app.run(host=host, port=port, debug=debug)
+
+
+@main.command(name="init-db")
+@click.option("--env-file", default=None, help="Path to .env file")
+def init_db(env_file: str | None):
+    """Initialize database tables."""
+    from ae_pinner.database import Database
+
+    config = Config.load(env_file)
+
+    if not config.db_host:
+        console.print("[red]Database configuration required.[/]")
+        console.print("Set DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD in .env")
+        sys.exit(1)
+
+    try:
+        db = Database(
+            host=config.db_host,
+            port=config.db_port,
+            name=config.db_name,
+            user=config.db_user,
+            password=config.db_password,
+        )
+        db.init_tables()
+        console.print("[green]Database tables created successfully![/]")
+    except Exception as e:
+        console.print(f"[red]Failed to initialize database:[/] {e}")
+        sys.exit(1)
 
 
 if __name__ == "__main__":

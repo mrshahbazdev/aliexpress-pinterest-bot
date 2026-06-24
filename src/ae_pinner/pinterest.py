@@ -90,9 +90,7 @@ class PinterestClient:
             )
         else:
             content_type = resp.headers.get("content-type", "")
-            error_data = (
-                resp.json() if content_type.startswith("application/json") else {}
-            )
+            error_data = resp.json() if content_type.startswith("application/json") else {}
             return PinResult(
                 success=False,
                 error=f"HTTP {resp.status_code}: {error_data.get('message', resp.text[:200])}",

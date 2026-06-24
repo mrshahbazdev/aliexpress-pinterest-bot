@@ -122,8 +122,7 @@ async def run_bot(
     for i, job in enumerate(result.jobs, 1):
         if not job.pin_content or not job.product.promo_url:
             console.print(
-                f"  [{i}/{len(result.jobs)}] [yellow]Skipped[/] "
-                "(missing content or promo URL)"
+                f"  [{i}/{len(result.jobs)}] [yellow]Skipped[/] (missing content or promo URL)"
             )
             result.pins_failed += 1
             continue
@@ -140,14 +139,10 @@ async def run_bot(
 
         if pin_result.success:
             result.pins_created += 1
-            console.print(
-                f"  [{i}/{len(result.jobs)}] [green]Created[/] Pin: {pin_result.pin_url}"
-            )
+            console.print(f"  [{i}/{len(result.jobs)}] [green]Created[/] Pin: {pin_result.pin_url}")
         else:
             result.pins_failed += 1
-            console.print(
-                f"  [{i}/{len(result.jobs)}] [red]Failed[/]: {pin_result.error}"
-            )
+            console.print(f"  [{i}/{len(result.jobs)}] [red]Failed[/]: {pin_result.error}")
 
         # Small delay between pin creations to avoid rate limits
         await asyncio.sleep(1.5)
