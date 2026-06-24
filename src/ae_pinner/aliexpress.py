@@ -1,6 +1,7 @@
 """AliExpress Affiliate Portal API integration.
 
 Fetches trending/recommended products and generates affiliate promotion links.
+Supports both individual cookie values and full raw cookie strings from browser DevTools.
 """
 
 from __future__ import annotations
@@ -29,17 +30,39 @@ class Product:
     promo_url: str | None = None
 
 
+def parse_cookie_string(raw_cookie: str) -> dict[str, str]:
+    """Parse a raw cookie header string into a dict of cookie name→value pairs."""
+    cookies: dict[str, str] = {}
+    for part in raw_cookie.split(";"):
+        part = part.strip()
+        if "=" in part:
+            key, _, value = part.partition("=")
+            cookies[key.strip()] = value.strip()
+    return cookies
+
+
 class AliExpressClient:
     """Client for AliExpress Affiliate Portal API."""
 
     BASE_URL = "https://portals.aliexpress.com"
 
-    def __init__(self, xman_us_t: str, xman_us_f: str, tracking_id: str = "default"):
+    def __init__(
+        self,
+        xman_us_t: str = "",
+        xman_us_f: str = "",
+        tracking_id: str = "default",
+        raw_cookie: str = "",
+    ):
         self._tracking_id = tracking_id
-        self._cookies = {
-            "xman_us_t": xman_us_t,
-            "xman_us_f": xman_us_f,
-        }
+
+        if raw_cookie:
+            self._cookies = parse_cookie_string(raw_cookie)
+        else:
+            self._cookies = {
+                "xman_us_t": xman_us_t,
+                "xman_us_f": xman_us_f,
+            }
+
         self._headers = {
             "accept": "application/json, text/plain, */*",
             "accept-language": "en-US,en;q=0.9",
@@ -47,7 +70,7 @@ class AliExpressClient:
             "user-agent": (
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/149.0.0.0 Safari/537.36"
+                "Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
             ),
         }
 
@@ -60,19 +83,7 @@ class AliExpressClient:
         language: str = "en",
         recommend_type: int = 1,
     ) -> list[Product]:
-        """Fetch recommended/trending products from AliExpress affiliate portal.
-
-        Args:
-            page_num: Page number for pagination.
-            page_size: Number of products per page (max 12).
-            ship_to: Country code for shipping destination.
-            currency: Currency code for prices.
-            language: Language code.
-            recommend_type: 1=trending, other types available.
-
-        Returns:
-            List of Product objects.
-        """
+        """Fetch recommended/trending products from AliExpress affiliate portal."""
         params = {
             "requireCouponCode": "",
             "freeShipping": "",
@@ -125,17 +136,7 @@ class AliExpressClient:
         currency: str = "USD",
         language: str = "en_US",
     ) -> str | None:
-        """Generate affiliate promotion link for a product.
-
-        Args:
-            product_id: The product's subItemId.
-            ship_to: Country code.
-            currency: Currency code.
-            language: Language code.
-
-        Returns:
-            The promo URL string, or None on failure.
-        """
+        """Generate affiliate promotion link for a product."""
         params = {
             "productId": product_id,
             "trackingId": self._tracking_id,
@@ -158,6 +159,36 @@ class AliExpressClient:
             return data["data"].get("promoteUrl")
         return None
 
+    async def get_promo_details(
+        self,
+        product_id: str,
+        ship_to: str = "US",
+        currency: str = "USD",
+        language: str = "en_US",
+    ) -> dict | None:
+        """Get full promote details including promo URL and all images."""
+        params = {
+            "productId": product_id,
+            "trackingId": self._tracking_id,
+            "language": language,
+            "shipTo": ship_to,
+            "currency": currency,
+            "subChannel": "hco",
+        }
+
+        async with httpx.AsyncClient(cookies=self._cookies, headers=self._headers) as client:
+            resp = await client.get(
+                f"{self.BASE_URL}/promote/promoteNow.do",
+                params=params,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+
+        if data.get("code") == "00" and data.get("data"):
+            return data["data"]
+        return None
+
     async def fetch_products_with_promo_links(
         self,
         page_num: int = 1,
@@ -166,10 +197,7 @@ class AliExpressClient:
         currency: str = "USD",
         language: str = "en",
     ) -> list[Product]:
-        """Fetch products and attach promo links to each.
-
-        Combines productRecommend + promoteNow calls.
-        """
+        """Fetch products and attach promo links to each."""
         products = await self.fetch_recommended_products(
             page_num=page_num,
             page_size=page_size,
