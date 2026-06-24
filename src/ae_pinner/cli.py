@@ -172,22 +172,29 @@ def verify(env_file: str | None):
 @click.option("--env-file", default=None, help="Path to .env file")
 @click.option("--debug", is_flag=True, help="Run in debug mode")
 def web(host: str, port: int, env_file: str | None, debug: bool):
-    """Start the web UI for managing products and Pinterest content."""
+    """Start the web UI for managing products and Pinterest content.
+
+    No .env file required -- database credentials can be entered
+    through the web UI on first run and are saved locally.
+    """
     from ae_pinner.web import init_app
 
     config = Config.load(env_file)
 
-    if not config.db_host:
-        console.print("[red]Database configuration required for web UI.[/]")
-        console.print("Set DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD in .env")
-        sys.exit(1)
-
-    console.print(
-        f"[bold]Starting Web UI[/]\n"
-        f"  URL: http://{host}:{port}\n"
-        f"  Database: {config.db_host}:{config.db_port}/{config.db_name}",
-        highlight=False,
-    )
+    if config.db_configured:
+        console.print(
+            f"[bold]Starting Web UI[/]\n"
+            f"  URL: http://{host}:{port}\n"
+            f"  Database: {config.db_host}:{config.db_port}/{config.db_name}",
+            highlight=False,
+        )
+    else:
+        console.print(
+            f"[bold]Starting Web UI[/]\n"
+            f"  URL: http://{host}:{port}\n"
+            f"  [yellow]No database configured -- you will be prompted in the UI[/]",
+            highlight=False,
+        )
 
     flask_app = init_app(config)
     flask_app.run(host=host, port=port, debug=debug)

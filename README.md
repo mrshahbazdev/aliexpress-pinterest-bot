@@ -1,31 +1,27 @@
 # AliExpress → Pinterest Auto-Pin Bot
 
-Automatically fetch trending products from your AliExpress Affiliate Portal, generate AI-powered Pinterest descriptions (using **Google Gemini** or **OpenAI**), and create pins with your affiliate links — all in one command.
+Fetch trending products from your AliExpress Affiliate Portal, save them to a MySQL database, generate AI-powered Pinterest content, and manage everything through a **web UI** or **REST API** — no `.env` file required.
 
 ## How It Works
 
 ```
-AliExpress Affiliate Portal API → AI (Gemini / OpenAI) → Pinterest API v5
-       (trending products)         (pin descriptions)       (create pins)
+AliExpress Portal API → MySQL Database → AI (Gemini/OpenAI) → Pinterest
+  (fetch products)     (persist + dedup)  (pin descriptions)    (create pins)
 ```
 
-### Pipeline:
-1. **Fetch** trending/recommended products from `portals.aliexpress.com/material/productRecommend.do`
-2. **Generate** affiliate promo links via `portals.aliexpress.com/promote/promoteNow.do`
-3. **AI-generate** catchy Pinterest titles, descriptions & hashtags (Gemini or OpenAI)
-4. **Create** pins on your Pinterest board with product images + affiliate links
+### Key Features
 
-### Key Features:
-- Supports **Google Gemini** (free tier available) and **OpenAI GPT-4o-mini**
-- Uses product images directly from AliExpress (no hosting needed)
-- AI generates optimized titles, descriptions with hashtags, and alt text
-- Built-in rate limiting (1.5s between pins) to avoid Pinterest throttling
-- Dry-run mode to preview pins before creating
-- CLI tool with helpful commands (`run`, `boards`, `verify`)
+- **Web UI** — Dark-themed dashboard to fetch, save, and manage products
+- **No .env needed** — All settings (DB, cookies, AI keys) entered via the UI
+- **Database** — MySQL storage with deduplication (no duplicate products)
+- **REST API** — JSON endpoints for programmatic access
+- **AI Content** — Gemini (free) or OpenAI for Pinterest titles, descriptions, hashtags
+- **Exe Ready** — Build as a standalone executable with PyInstaller
+- **Cookie Paste** — Paste the full `cookie:` header from DevTools, auto-parsed
 
 ---
 
-## Quick Start
+## Quick Start (Web UI)
 
 ### 1. Install
 
@@ -35,119 +31,268 @@ cd aliexpress-pinterest-bot
 pip install -e .
 ```
 
-### 2. Configure
+### 2. Run
 
 ```bash
-cp .env.example .env
+ae-pinner web
 ```
 
-Edit `.env` with your credentials (see below).
+Open **http://localhost:5000** in your browser.
 
-### 3. Run
+### 3. First Run — Database Setup
 
-```bash
-# Create 12 pins with Gemini AI
-ae-pinner run --ai gemini --count 12
+On first launch you'll see a **Database Setup** page. Enter your MySQL credentials:
 
-# Preview without creating pins
-ae-pinner run --ai gemini --count 5 --dry-run
+| Field    | Example                            |
+|----------|------------------------------------|
+| Host     | `db.example.com`                   |
+| Port     | `3306`                             |
+| Database | `my_database`                      |
+| Username | `db_user`                          |
+| Password | `secret`                           |
 
-# Use OpenAI instead
-ae-pinner run --ai openai --count 12
-```
+Click **Connect & Save**. Credentials are stored locally in `~/.config/ae-pinner/config.json` (Linux) or `%APPDATA%\ae-pinner\config.json` (Windows) so you never need to enter them again.
+
+### 4. Configure Cookies
+
+Go to **Settings** and paste the full `cookie:` header from your browser:
+
+1. Log into https://portals.aliexpress.com
+2. Open DevTools (F12) → **Network** tab
+3. Click any request → copy the entire `cookie:` header value
+4. Paste it into the **Full Cookie Header** field
+
+### 5. Fetch & Save Products
+
+Go to **Fetch Products**, select page/count, click **Fetch & Preview**.
+- **Save All to DB** — saves all fetched products (skips duplicates)
+- **Save + Generate Pinterest** — saves and generates AI content
+
+### 6. Generate Pinterest Content
+
+Go to **Saved Products** and click **Generate Pinterest** on individual products, or use **Generate All** from the dashboard.
+
+> Requires a Gemini or OpenAI API key (set in **Settings → AI Provider Settings**).
 
 ---
 
-## Configuration
+## Building an Executable (EXE)
 
-### `.env` File
+Build a standalone `.exe` so the app runs without Python installed:
 
-```env
-# Pinterest API
-PINTEREST_ACCESS_TOKEN=your_token_here
-PINTEREST_BOARD_ID=your_board_id_here
+```bash
+# Install PyInstaller
+pip install pyinstaller
 
-# AI Provider (set at least one)
-GEMINI_API_KEY=your_gemini_key_here        # Option 1: Google Gemini (free)
-OPENAI_API_KEY=your_openai_key_here        # Option 2: OpenAI
-
-# AliExpress Session Cookies
-AE_COOKIE_XMAN_US_T=your_xman_us_t_cookie
-AE_COOKIE_XMAN_US_F=your_xman_us_f_cookie
-AE_TRACKING_ID=default
-
-# Pin Settings
-PIN_LANGUAGE=en
-PIN_SHIP_TO=US
-PIN_CURRENCY=USD
+# Build the exe
+pyinstaller --onefile --name ae-pinner \
+  --hidden-import=ae_pinner.web \
+  --hidden-import=ae_pinner.database \
+  --hidden-import=ae_pinner.ai_generator \
+  --hidden-import=ae_pinner.aliexpress \
+  --hidden-import=ae_pinner.config \
+  --hidden-import=mysql.connector \
+  --collect-all flask \
+  --collect-all jinja2 \
+  src/ae_pinner/cli.py
 ```
+
+The exe will be in `dist/ae-pinner.exe`. Run it:
+
+```bash
+# Start the web UI
+./dist/ae-pinner web --port 5000
+
+# Or on Windows
+dist\ae-pinner.exe web --port 5000
+```
+
+All settings are stored in the local config file — no `.env` file needed.
 
 ---
 
-## Getting Your Credentials
+## REST API
 
-### Pinterest Access Token
-1. Go to https://developers.pinterest.com/apps/
-2. Select your app (e.g., "cracknns" App ID: 1475080)
-3. Click **"Generate access token"**
-4. Grant scopes: `pins:read`, `pins:write`, `boards:read`
-5. Copy the token into `.env`
+All API endpoints return JSON. Base URL: `http://localhost:5000`
 
-### Pinterest Board ID
+### Products
+
+| Method   | Endpoint                  | Description                |
+|----------|---------------------------|----------------------------|
+| `GET`    | `/api/products`           | List saved products        |
+| `GET`    | `/api/products/<item_id>` | Get single product         |
+| `DELETE` | `/api/products/<item_id>` | Delete a product           |
+| `GET`    | `/api/stats`              | Product statistics         |
+
+#### List Products
+
 ```bash
-ae-pinner boards
-# Output:
-#   ID: 1234567890  Name: My Products Board
+curl http://localhost:5000/api/products?page=1&per_page=20
 ```
 
-### Gemini API Key (Free)
-1. Go to https://aistudio.google.com/apikey
-2. Click "Create API Key"
-3. Copy it into `.env`
+```json
+{
+  "total": 48,
+  "page": 1,
+  "per_page": 20,
+  "products": [
+    {
+      "item_id": "1005012175190799",
+      "title": "Halo Cat Eye Nail Magnet Ring...",
+      "discount_price": "USD 0.99",
+      "original_price": "USD 2.73",
+      "pin_title": "Only $0.99! Cat Eye Nail Tool...",
+      "pin_description": "Transform your manicure...",
+      "pin_generated": true
+    }
+  ]
+}
+```
 
-### OpenAI API Key (Alternative)
-1. Go to https://platform.openai.com/api-keys
-2. Create a new key
-3. Copy it into `.env`
+#### Get Stats
 
-### AliExpress Cookies
-1. Log into https://portals.aliexpress.com (affiliate portal)
-2. Open browser DevTools (F12) → **Network** tab
-3. Click any request to `portals.aliexpress.com`
-4. Find in **Cookie** header:
-   - `xman_us_t` → copy value to `AE_COOKIE_XMAN_US_T`
-   - `xman_us_f` → copy value to `AE_COOKIE_XMAN_US_F`
+```bash
+curl http://localhost:5000/api/stats
+```
 
-> **Note:** AliExpress cookies expire periodically. Refresh them from your browser when the bot stops fetching products.
+```json
+{
+  "total": 48,
+  "with_pins": 32,
+  "without_pins": 16
+}
+```
+
+### Fetch & Save
+
+| Method | Endpoint                     | Description                        |
+|--------|------------------------------|------------------------------------|
+| `POST` | `/api/fetch`                 | Fetch products from AliExpress     |
+| `POST` | `/api/generate/<item_id>`    | Generate Pinterest content for one |
+
+#### Fetch Products
+
+```bash
+curl -X POST http://localhost:5000/api/fetch \
+  -H "Content-Type: application/json" \
+  -d '{"page": 1, "count": 12, "save": true}'
+```
+
+```json
+{
+  "page": 1,
+  "fetched": 12,
+  "saved": 10,
+  "products": [...]
+}
+```
+
+#### Generate Pinterest Content
+
+```bash
+curl -X POST http://localhost:5000/api/generate/1005012175190799
+```
+
+```json
+{
+  "item_id": "1005012175190799",
+  "pin_title": "Only $0.99! Cat Eye Nail Magnet Tool - 64% OFF",
+  "pin_description": "Transform your manicure... #nailart #beauty",
+  "pin_alt_text": "Cat eye nail magnet ring tool..."
+}
+```
+
+### Settings
+
+| Method | Endpoint         | Description             |
+|--------|------------------|-------------------------|
+| `GET`  | `/api/settings`  | Get current settings    |
+| `POST` | `/api/settings`  | Update settings         |
+
+#### Get Settings
+
+```bash
+curl http://localhost:5000/api/settings
+```
+
+```json
+{
+  "cookies_set": true,
+  "tracking_id": "default",
+  "ship_to": "US",
+  "currency": "USD",
+  "language": "en",
+  "gemini_key_set": true,
+  "openai_key_set": false
+}
+```
+
+#### Update Settings
+
+```bash
+curl -X POST http://localhost:5000/api/settings \
+  -H "Content-Type: application/json" \
+  -d '{"raw_cookie": "cna=...; xman_us_t=...", "tracking_id": "default"}'
+```
 
 ---
 
 ## CLI Commands
 
-### `ae-pinner run` — Create pins
+### `ae-pinner web` — Start Web UI
+
 ```bash
-ae-pinner run [OPTIONS]
+ae-pinner web [--host 0.0.0.0] [--port 5000] [--debug]
 ```
 
-| Option | Default | Description |
-|--------|---------|-------------|
-| `--ai` | `gemini` | AI provider (`gemini` or `openai`) |
-| `--page` | `1` | Page number for product recommendations |
-| `--count` | `12` | Number of products to process (max 12) |
-| `--dry-run` | off | Preview mode — no pins created |
-| `--env-file` | `.env` | Path to config file |
+No `.env` file required. Database credentials are entered via the web UI on first run.
+
+### `ae-pinner run` — Create pins (CLI mode)
+
+```bash
+ae-pinner run --ai gemini --count 12
+ae-pinner run --ai openai --count 5 --dry-run
+```
+
+| Option       | Default  | Description                          |
+|--------------|----------|--------------------------------------|
+| `--ai`       | `gemini` | AI provider (`gemini` or `openai`)   |
+| `--page`     | `1`      | Page number                          |
+| `--count`    | `12`     | Products to process (max 12)         |
+| `--dry-run`  | off      | Preview without creating pins        |
+| `--env-file` | `.env`   | Path to config file                  |
 
 ### `ae-pinner boards` — List Pinterest boards
+
 ```bash
 ae-pinner boards
 ```
-Shows all your boards with their IDs (needed for `PINTEREST_BOARD_ID`).
 
 ### `ae-pinner verify` — Check connections
+
 ```bash
 ae-pinner verify
 ```
-Tests Pinterest API, AliExpress cookies, and AI key configuration.
+
+### `ae-pinner init-db` — Initialize database tables
+
+```bash
+ae-pinner init-db
+```
+
+---
+
+## Configuration Storage
+
+| Source | Priority | Description |
+|--------|----------|-------------|
+| Web UI / `config.json` | 1st | Local JSON file persisted by the app |
+| `.env` / Environment | 2nd | Optional fallback for CLI usage |
+
+Config file locations:
+- **Linux**: `~/.config/ae-pinner/config.json`
+- **macOS**: `~/Library/Application Support/ae-pinner/config.json`
+- **Windows**: `%APPDATA%\ae-pinner\config.json`
 
 ---
 
@@ -157,58 +302,28 @@ Tests Pinterest API, AliExpress cookies, and AI key configuration.
 aliexpress-pinterest-bot/
 ├── src/ae_pinner/
 │   ├── __init__.py        # Package metadata
-│   ├── cli.py             # Click CLI (run, boards, verify commands)
-│   ├── config.py          # .env loader & validation
-│   ├── aliexpress.py      # AliExpress API client (fetch + promo links)
-│   ├── ai_generator.py    # AI pin content (Gemini + OpenAI support)
-│   ├── pinterest.py       # Pinterest API v5 (create pins)
-│   └── bot.py             # Main orchestrator pipeline
-├── .env.example           # Template configuration
+│   ├── cli.py             # CLI commands (web, run, boards, verify)
+│   ├── config.py          # Config loader (JSON + .env fallback)
+│   ├── web.py             # Flask web UI + REST API
+│   ├── database.py        # MySQL connection + CRUD operations
+│   ├── aliexpress.py      # AliExpress API client
+│   ├── ai_generator.py    # AI pin content (Gemini + OpenAI)
+│   ├── pinterest.py       # Pinterest API v5
+│   └── bot.py             # Main pipeline orchestrator
+├── .env.example           # Template (optional, for CLI mode)
 ├── pyproject.toml         # Python package config
 └── README.md
 ```
 
 ---
 
-## How AI Generates Pin Content
-
-The bot sends product details to the AI and gets back:
-
-| Field | Example |
-|-------|---------|
-| **Title** | `Only $0.99! Cat Eye Nail Magnet Tool - 64% OFF` |
-| **Description** | `Transform your manicure with this magnetic nail art tool. Was $2.73, now just $0.99! #nailart #manicure #beauty #deals #cateyenails` |
-| **Alt Text** | `Cat eye nail magnet ring tool with handle for gel polish manicure` |
-
-The AI is prompted to:
-- Keep titles under 100 chars and catchy
-- Include 5-8 relevant hashtags
-- Mention price drops and urgency
-- Use 2-3 emojis for visual appeal
-- Sound organic, not spammy
-
----
-
-## API Endpoints Used
-
-### AliExpress Affiliate Portal
-- `GET /material/productRecommend.do` — Fetch trending products
-- `GET /promote/promoteNow.do` — Generate affiliate promo link
-
-### Pinterest API v5
-- `POST /v5/pins` — Create a pin
-- `GET /v5/boards` — List user boards
-- `GET /v5/user_account` — Verify token
-
----
-
 ## Notes & Limitations
 
+- **AliExpress cookies** expire periodically — refresh from browser when needed
 - **Pinterest Trial Access** allows limited API calls per day
-- **AliExpress cookies** expire — refresh from browser when needed
 - **Rate limiting**: 1.5s delay between pin creations
-- **Max 12 products** per API call (AliExpress pagination)
-- Product images are publicly hosted on AliExpress CDN — no re-hosting needed
+- **Max 12 products** per API call (AliExpress pagination limit)
+- Product images are on AliExpress CDN — no re-hosting needed
 
 ---
 
