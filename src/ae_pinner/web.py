@@ -326,20 +326,28 @@ SETTINGS_TPL = """
 {% extends "master" %}
 {% block content %}
 <div class="card">
-  <h2>AliExpress Cookie Settings</h2>
+  <h2>AliExpress Request Headers</h2>
   <p style="color:#666;font-size:13px;margin-bottom:14px">
-    Paste the full <code>cookie:</code> header from browser
-    DevTools (Network tab) when logged into
-    <a href="https://portals.aliexpress.com" target="_blank"
-       style="color:#ff4757">portals.aliexpress.com</a>.
+    Open Chrome DevTools &rarr; Network tab &rarr; click any request to
+    <code>portals.aliexpress.com</code> &rarr; copy the <b>Request Headers</b>
+    section and paste below. Cookies, User-Agent, Referer etc. are extracted
+    automatically.
   </p>
   <form method="post" action="/settings">
     <div class="fg" style="margin-bottom:14px">
-      <label>Full Cookie Header</label>
-      <textarea name="raw_cookie" rows="6"
-                placeholder="cna=...; xman_us_t=...; xman_us_f=..."
-                >{{ raw_cookie }}</textarea>
+      <label>Raw Request Headers (paste from Chrome DevTools)</label>
+      <textarea name="raw_headers" rows="10"
+                style="font-size:11px;line-height:1.4"
+                placeholder=":authority&#10;portals.aliexpress.com&#10;:method&#10;GET&#10;cookie&#10;cna=...; xman_us_t=...&#10;user-agent&#10;Mozilla/5.0 ..."
+                >{{ raw_headers }}</textarea>
     </div>
+    {% if headers_parsed %}
+    <div class="alert alert-ok" style="margin-bottom:14px">
+      Headers parsed: cookie {{ 'found' if cookie_found else 'MISSING' }},
+      user-agent {{ 'found' if ua_found else 'missing' }},
+      referer {{ 'found' if referer_found else 'missing' }}
+    </div>
+    {% endif %}
     <div class="form-row" style="margin-bottom:14px">
       <div class="fg">
         <label>Tracking ID</label>
@@ -655,12 +663,15 @@ def _render(template_name: str, **kwargs: object) -> str:
 
 
 def _get_ae_client() -> AliExpressClient | None:
-    """Build an AliExpressClient from saved cookie settings."""
+    """Build an AliExpressClient from saved header/cookie settings."""
     db = get_db()
+    raw_headers = db.get_setting("raw_headers")
     raw_cookie = db.get_setting("raw_cookie")
-    if not raw_cookie:
+    if not raw_headers and not raw_cookie:
         return None
     tracking_id = db.get_setting("tracking_id") or "default"
+    if raw_headers:
+        return AliExpressClient(raw_headers=raw_headers, tracking_id=tracking_id)
     return AliExpressClient(raw_cookie=raw_cookie, tracking_id=tracking_id)
 
 
@@ -830,7 +841,7 @@ def setup_submit() -> str:
 def dashboard() -> str:
     db = get_db()
     stats = db.get_stats()
-    cookie_ok = bool(db.get_setting("raw_cookie"))
+    cookie_ok = bool(db.get_setting("raw_headers") or db.get_setting("raw_cookie"))
     return _render(
         "dashboard",
         page_name="dashboard",
@@ -843,10 +854,18 @@ def dashboard() -> str:
 def settings_page() -> str:
     db = get_db()
     config = get_config()
+    from ae_pinner.aliexpress import parse_raw_request_headers
+
+    raw_headers = db.get_setting("raw_headers")
+    parsed = parse_raw_request_headers(raw_headers) if raw_headers else {}
     return _render(
         "settings",
         page_name="settings",
-        raw_cookie=db.get_setting("raw_cookie"),
+        raw_headers=raw_headers,
+        headers_parsed=bool(raw_headers),
+        cookie_found=bool(parsed.get("cookie")),
+        ua_found=bool(parsed.get("user-agent")),
+        referer_found=bool(parsed.get("referer")),
         tracking_id=db.get_setting("tracking_id") or "default",
         ship_to=db.get_setting("ship_to") or "US",
         currency=db.get_setting("currency") or "USD",
@@ -864,7 +883,7 @@ def settings_page() -> str:
 @app.route("/settings", methods=["POST"])
 def save_settings() -> str:
     db = get_db()
-    db.set_setting("raw_cookie", request.form.get("raw_cookie", "").strip())
+    db.set_setting("raw_headers", request.form.get("raw_headers", "").strip())
     db.set_setting("tracking_id", request.form.get("tracking_id", "default").strip())
     db.set_setting("ship_to", request.form.get("ship_to", "US").strip())
     db.set_setting("currency", request.form.get("currency", "USD").strip())
@@ -919,7 +938,7 @@ def fetch_page() -> str:
     db = get_db()
     page_num = int(request.args.get("page", 1))
     count = int(request.args.get("count", 12))
-    cookie_ok = bool(db.get_setting("raw_cookie"))
+    cookie_ok = bool(db.get_setting("raw_headers") or db.get_setting("raw_cookie"))
     return _render(
         "fetch",
         page_name="fetch",
@@ -1283,10 +1302,12 @@ def api_generate(item_id: str):
 def api_get_settings():
     """GET /api/settings - Current settings (cookies masked)."""
     db = get_db()
+    raw_headers = db.get_setting("raw_headers")
     raw_cookie = db.get_setting("raw_cookie")
     return jsonify(
         {
-            "cookies_set": bool(raw_cookie),
+            "headers_set": bool(raw_headers),
+            "cookies_set": bool(raw_headers or raw_cookie),
             "tracking_id": db.get_setting("tracking_id") or "default",
             "ship_to": db.get_setting("ship_to") or "US",
             "currency": db.get_setting("currency") or "USD",
@@ -1303,6 +1324,7 @@ def api_save_settings():
     db = get_db()
     data = request.get_json(force=True) or {}
     allowed = (
+        "raw_headers",
         "raw_cookie",
         "tracking_id",
         "ship_to",
