@@ -41,10 +41,70 @@ def parse_cookie_string(raw_cookie: str) -> dict[str, str]:
     return cookies
 
 
+# Header names emitted by Chrome DevTools "Request Headers" copy.
+_KNOWN_HEADERS = frozenset(
+    {
+        ":authority",
+        ":method",
+        ":path",
+        ":scheme",
+        "accept",
+        "accept-encoding",
+        "accept-language",
+        "bx-v",
+        "cache-control",
+        "content-type",
+        "cookie",
+        "origin",
+        "pragma",
+        "priority",
+        "referer",
+        "sec-ch-ua",
+        "sec-ch-ua-mobile",
+        "sec-ch-ua-platform",
+        "sec-fetch-dest",
+        "sec-fetch-mode",
+        "sec-fetch-site",
+        "user-agent",
+    }
+)
+
+
+def parse_raw_request_headers(raw_text: str) -> dict[str, str]:
+    """Parse raw HTTP request headers copied from Chrome DevTools.
+
+    Chrome DevTools shows headers as alternating lines::
+
+        header-name
+        header-value
+        header-name2
+        header-value2
+
+    Returns a dict with lowercase header names as keys.
+    """
+    lines = [line.strip() for line in raw_text.strip().splitlines() if line.strip()]
+    headers: dict[str, str] = {}
+    i = 0
+    while i < len(lines) - 1:
+        key = lines[i].lower()
+        if key in _KNOWN_HEADERS:
+            headers[key] = lines[i + 1]
+            i += 2
+        else:
+            i += 1
+    return headers
+
+
 class AliExpressClient:
     """Client for AliExpress Affiliate Portal API."""
 
     BASE_URL = "https://portals.aliexpress.com"
+
+    _DEFAULT_UA = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
+    )
 
     def __init__(
         self,
@@ -52,27 +112,44 @@ class AliExpressClient:
         xman_us_f: str = "",
         tracking_id: str = "default",
         raw_cookie: str = "",
+        raw_headers: str = "",
     ):
         self._tracking_id = tracking_id
 
-        if raw_cookie:
+        if raw_headers:
+            parsed = parse_raw_request_headers(raw_headers)
+            cookie_str = parsed.get("cookie", "")
+            self._cookies = parse_cookie_string(cookie_str) if cookie_str else {}
+            self._headers = {
+                "accept": parsed.get("accept", "application/json, text/plain, */*"),
+                "accept-language": parsed.get("accept-language", "en-US,en;q=0.9"),
+                "referer": parsed.get(
+                    "referer",
+                    "https://portals.aliexpress.com/affiportals/web/ad_center.htm",
+                ),
+                "user-agent": parsed.get("user-agent", self._DEFAULT_UA),
+            }
+            if parsed.get("bx-v"):
+                self._headers["bx-v"] = parsed["bx-v"]
+        elif raw_cookie:
             self._cookies = parse_cookie_string(raw_cookie)
+            self._headers = {
+                "accept": "application/json, text/plain, */*",
+                "accept-language": "en-US,en;q=0.9",
+                "referer": "https://portals.aliexpress.com/affiportals/web/ad_center.htm",
+                "user-agent": self._DEFAULT_UA,
+            }
         else:
             self._cookies = {
                 "xman_us_t": xman_us_t,
                 "xman_us_f": xman_us_f,
             }
-
-        self._headers = {
-            "accept": "application/json, text/plain, */*",
-            "accept-language": "en-US,en;q=0.9",
-            "referer": "https://portals.aliexpress.com/affiportals/web/ad_center.htm",
-            "user-agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/149.0.0.0 Safari/537.36 Edg/149.0.0.0"
-            ),
-        }
+            self._headers = {
+                "accept": "application/json, text/plain, */*",
+                "accept-language": "en-US,en;q=0.9",
+                "referer": "https://portals.aliexpress.com/affiportals/web/ad_center.htm",
+                "user-agent": self._DEFAULT_UA,
+            }
 
     async def fetch_recommended_products(
         self,
