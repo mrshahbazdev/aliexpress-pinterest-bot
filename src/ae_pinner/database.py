@@ -114,8 +114,8 @@ class Database:
         self._migrate_add_columns()
 
     _MIGRATE_COLS = (
-        ("raw_json", "LONGTEXT NOT NULL DEFAULT ''"),
-        ("promo_response", "LONGTEXT NOT NULL DEFAULT ''"),
+        ("raw_json", "LONGTEXT NOT NULL"),
+        ("promo_response", "LONGTEXT NOT NULL"),
     )
 
     def _migrate_add_columns(self) -> None:
