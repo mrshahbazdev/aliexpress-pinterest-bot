@@ -471,7 +471,7 @@ FETCH_TPL = """
       <input type="hidden" name="page" value="{{ page_num }}">
       <input type="hidden" name="count" value="{{ count }}">
       <input type="hidden" name="products_json"
-             value="{{ products_json }}">
+             value="{{ products_json | e }}">
       <button type="submit" name="action" value="save"
               class="btn btn-green">Save All to DB</button>
       <button type="submit" name="action" value="save_gen"
@@ -700,6 +700,8 @@ def _product_to_dict(p: Product, db: Database) -> dict:
         "commission_rate": p.commission_rate,
         "item_url": p.item_url,
         "promo_url": p.promo_url or "",
+        "raw_json": p.raw_json,
+        "promo_response": p.promo_response,
         "is_duplicate": db.product_exists(p.item_id),
     }
 
@@ -719,6 +721,8 @@ def _dict_to_product(d: dict) -> Product:
         commission_rate=d.get("commission_rate", ""),
         item_url=d.get("item_url", ""),
         promo_url=d.get("promo_url"),
+        raw_json=d.get("raw_json", ""),
+        promo_response=d.get("promo_response", ""),
     )
 
 
@@ -1196,6 +1200,18 @@ def api_product_detail(item_id: str):
     p = db.get_product_by_item_id(item_id)
     if not p:
         return jsonify({"error": "not found"}), 404
+    raw = None
+    if p.raw_json:
+        try:
+            raw = json.loads(p.raw_json)
+        except (json.JSONDecodeError, TypeError):
+            raw = p.raw_json
+    promo = None
+    if p.promo_response:
+        try:
+            promo = json.loads(p.promo_response)
+        except (json.JSONDecodeError, TypeError):
+            promo = p.promo_response
     return jsonify(
         {
             "item_id": p.item_id,
@@ -1209,6 +1225,8 @@ def api_product_detail(item_id: str):
             "commission_rate": p.commission_rate,
             "item_url": p.item_url,
             "promo_url": p.promo_url,
+            "raw_json": raw,
+            "promo_response": promo,
             "pin_title": p.pin_title,
             "pin_description": p.pin_description,
             "pin_alt_text": p.pin_alt_text,
