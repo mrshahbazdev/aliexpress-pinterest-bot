@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -10,6 +11,8 @@ from mysql.connector import pooling
 
 from ae_pinner.ai_generator import PinContent
 from ae_pinner.aliexpress import Product
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -110,29 +113,29 @@ class Database:
             conn.close()
         self._migrate_add_columns()
 
+    _MIGRATE_COLS = (
+        ("raw_json", "LONGTEXT NOT NULL DEFAULT ''"),
+        ("promo_response", "LONGTEXT NOT NULL DEFAULT ''"),
+    )
+
     def _migrate_add_columns(self) -> None:
         """Add columns introduced after initial schema."""
-        for col, col_def in (
-            ("raw_json", "LONGTEXT NOT NULL DEFAULT ''"),
-            ("promo_response", "LONGTEXT NOT NULL DEFAULT ''"),
-        ):
+        for col, col_def in self._MIGRATE_COLS:
             conn = self._conn()
             try:
                 cur = conn.cursor()
-                cur.execute(
-                    "SELECT COUNT(*) FROM information_schema.COLUMNS "
-                    "WHERE TABLE_SCHEMA = DATABASE() "
-                    "AND TABLE_NAME = 'products' AND COLUMN_NAME = %s",
-                    (col,),
-                )
-                if cur.fetchone()[0] == 0:
-                    cur.execute(
-                        f"ALTER TABLE products ADD COLUMN {col} {col_def}"
-                    )
+                try:
+                    cur.execute(f"ALTER TABLE products ADD COLUMN {col} {col_def}")
                     conn.commit()
+                    log.info("Added column %s to products table", col)
+                except mysql.connector.errors.ProgrammingError as exc:
+                    if exc.errno == 1060:  # Duplicate column name
+                        pass
+                    else:
+                        log.warning("Migration ALTER for %s failed: %s", col, exc)
                 cur.close()
-            except Exception:
-                pass
+            except Exception as exc:
+                log.warning("Migration connection error for %s: %s", col, exc)
             finally:
                 conn.close()
 
@@ -185,44 +188,59 @@ class Database:
         conn = self._conn()
         try:
             cur = conn.cursor()
-            cur.execute(
-                """
-                INSERT INTO products
-                    (item_id, main_item_id, title, image_url, all_images,
-                     original_price, discount_price, discount_rate,
-                     sales_30day, comment_score, commission_rate,
-                     item_url, promo_url, raw_json, promo_response,
-                     pin_title, pin_description, pin_alt_text, pin_generated)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                """,
-                (
-                    product.item_id,
-                    product.main_item_id,
-                    product.title,
-                    product.image_url,
-                    ",".join(product.all_images),
-                    product.original_price,
-                    product.discount_price,
-                    product.discount_rate,
-                    product.sales_30day,
-                    product.comment_score,
-                    product.commission_rate,
-                    product.item_url,
-                    product.promo_url or "",
-                    product.raw_json,
-                    product.promo_response,
-                    pin_content.title if pin_content else "",
-                    pin_content.description if pin_content else "",
-                    pin_content.alt_text if pin_content else "",
-                    pin_content is not None,
-                ),
-            )
+            try:
+                self._insert_product(cur, product, pin_content)
+            except mysql.connector.errors.ProgrammingError as exc:
+                if exc.errno == 1054:  # Unknown column
+                    cur.close()
+                    conn.close()
+                    self._migrate_add_columns()
+                    conn = self._conn()
+                    cur = conn.cursor()
+                    self._insert_product(cur, product, pin_content)
+                else:
+                    raise
             cur.close()
             return True
-        except mysql.connector.IntegrityError:
+        except mysql.connector.errors.IntegrityError:
             return False
         finally:
             conn.close()
+
+    @staticmethod
+    def _insert_product(cur, product: Product, pin_content: PinContent | None) -> None:
+        cur.execute(
+            """
+            INSERT INTO products
+                (item_id, main_item_id, title, image_url, all_images,
+                 original_price, discount_price, discount_rate,
+                 sales_30day, comment_score, commission_rate,
+                 item_url, promo_url, raw_json, promo_response,
+                 pin_title, pin_description, pin_alt_text, pin_generated)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                product.item_id,
+                product.main_item_id,
+                product.title,
+                product.image_url,
+                ",".join(product.all_images),
+                product.original_price,
+                product.discount_price,
+                product.discount_rate,
+                product.sales_30day,
+                product.comment_score,
+                product.commission_rate,
+                product.item_url,
+                product.promo_url or "",
+                product.raw_json,
+                product.promo_response,
+                pin_content.title if pin_content else "",
+                pin_content.description if pin_content else "",
+                pin_content.alt_text if pin_content else "",
+                pin_content is not None,
+            ),
+        )
 
     def update_pin_content(self, item_id: str, pin_content: PinContent) -> bool:
         """Update the Pinterest content for an existing product."""
