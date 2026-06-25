@@ -12,6 +12,8 @@ Provides a dashboard to:
 from __future__ import annotations
 
 import asyncio
+import base64
+import httpx
 import json
 import math
 import urllib.parse
@@ -22,6 +24,7 @@ from ae_pinner.ai_generator import AIProvider, generate_pin_content
 from ae_pinner.aliexpress import AliExpressClient, Product
 from ae_pinner.config import Config
 from ae_pinner.database import Database
+from ae_pinner.pinterest import PinterestClient
 
 app = Flask(__name__)
 
@@ -295,6 +298,10 @@ DASHBOARD_TPL = """
     <div class="l">Pinterest Ready</div>
   </div>
   <div class="stat">
+    <div class="n" style="color:#E60023">{{ stats.published }}</div>
+    <div class="l">Published</div>
+  </div>
+  <div class="stat">
     <div class="n">{{ stats.without_pins }}</div>
     <div class="l">Pending AI</div>
   </div>
@@ -315,6 +322,13 @@ DASHBOARD_TPL = """
     <form method="post" action="/generate-all" style="display:inline">
       <button class="btn btn-green">
         Generate All Pinterest ({{ stats.without_pins }})
+      </button>
+    </form>
+    {% endif %}
+    {% if stats.ready_to_publish > 0 %}
+    <form method="post" action="/publish-all" style="display:inline">
+      <button class="btn" style="background:#E60023;color:#fff">
+        Publish All to Pinterest ({{ stats.ready_to_publish }})
       </button>
     </form>
     {% endif %}
@@ -374,6 +388,115 @@ SETTINGS_TPL = """
     <button type="submit" class="btn btn-red">Save Settings</button>
   </form>
 </div>
+<div class="card">
+  <h2 style="color:#E60023">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="#E60023" style="vertical-align:middle;margin-right:6px">
+      <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738.098.119.112.224.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z"/>
+    </svg>
+    Pinterest API Settings
+  </h2>
+  <p style="color:#666;font-size:13px;margin-bottom:14px">
+    Enter your Pinterest App details to authenticate automatically and get publishing permissions.
+    Get your App ID & Secret from
+    <a href="https://developers.pinterest.com/apps/" target="_blank"
+       style="color:#E60023">Pinterest Developer Portal</a>.<br>
+    <strong style="color:#ff4757;margin-top:6px;display:inline-block">Important:</strong> 
+    Make sure you add <code>http://localhost:5000/pinterest/callback</code> to your "Redirect URIs" on Pinterest!
+  </p>
+  <form method="post" action="/settings/pinterest">
+    <div style="display:flex;gap:10px;margin-bottom:12px">
+      <div class="fg" style="flex:1">
+        <label>App ID (Client ID)</label>
+        <input name="pinterest_client_id" value="{{ pinterest_client_id }}" placeholder="1475080">
+      </div>
+      <div class="fg" style="flex:1">
+        <label>App Secret</label>
+        <input name="pinterest_client_secret" type="password" value="{{ pinterest_client_secret }}" placeholder="••••••••">
+      </div>
+    </div>
+    <div class="fg" style="margin-bottom:12px">
+      <label>Access Token <small>(Auto-filled via Login or paste manually)</small></label>
+      <input name="pinterest_token" type="password" id="pinterestTokenInput"
+             value="{{ pinterest_token }}"
+             placeholder="pina_...">
+    </div>
+    <div class="fg" style="margin-bottom:12px">
+      <label>Board <small style="color:#555">(select where pins will be published)</small></label>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select name="pinterest_board_id" id="boardSelect"
+                style="flex:1;padding:10px 14px;background:#12121f;color:#e0e0e0;
+                       border:1px solid #1e1e35;border-radius:8px;font-size:14px">
+          {% if pinterest_board_id %}
+          <option value="{{ pinterest_board_id }}" selected>
+            {% if pinterest_board_name %}{{ pinterest_board_name }}{% else %}Board ID: {{ pinterest_board_id }}{% endif %}
+          </option>
+          {% else %}
+          <option value="">-- Pehle token save karein, phir boards load hongi --</option>
+          {% endif %}
+          {% for board in pinterest_boards %}
+          {% if board.id != pinterest_board_id %}
+          <option value="{{ board.id }}">{{ board.name }}</option>
+          {% endif %}
+          {% endfor %}
+        </select>
+        <button type="button" onclick="fetchBoards()" class="btn btn-gray"
+                style="white-space:nowrap;padding:10px 16px">
+          &#8635; Load Boards
+        </button>
+      </div>
+    </div>
+    <div class="fg" style="margin-bottom:14px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" name="auto_publish" value="1"
+               {{ 'checked' if auto_publish }}
+               style="width:18px;height:18px;accent-color:#E60023">
+        <span>Auto-Publish: Generate hote hi pin automatically publish ho jaye</span>
+      </label>
+      <small style="color:#555;font-size:11px;display:block;margin-top:4px">
+        Jab yeh ON hai, har product ka Pinterest content generate hone ke baad
+        wo automatically aapki selected board par publish ho jayega.
+      </small>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center">
+      <a href="/pinterest/login" class="btn" style="background:#E60023;color:#fff;text-decoration:none;padding:10px 16px;border-radius:6px;font-weight:bold">
+        1. Login with Pinterest
+      </a>
+      <button type="submit" class="btn btn-gray" style="padding:10px 16px;border-radius:6px">2. Save Settings</button>
+      {% if pinterest_token %}
+      <span style="color:#4ecb71;font-size:13px">&#10003; Token configured</span>
+      {% endif %}
+    </div>
+  </form>
+</div>
+<script>
+function fetchBoards(){
+  var token = document.getElementById('pinterestTokenInput').value;
+  if(!token){alert('Pehle Access Token enter karein!');return;}
+  var sel = document.getElementById('boardSelect');
+  sel.innerHTML = '<option>Loading boards...</option>';
+  fetch('/api/pinterest/boards', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({token: token})
+  })
+  .then(r => r.json())
+  .then(data => {
+    if(data.error){sel.innerHTML='<option>Error: '+data.error+'</option>';return;}
+    sel.innerHTML = '';
+    if(data.boards.length === 0){
+      sel.innerHTML = '<option value="">Koi board nahi mili</option>';
+      return;
+    }
+    data.boards.forEach(function(b){
+      var opt = document.createElement('option');
+      opt.value = b.id;
+      opt.textContent = b.name + (b.description ? ' - '+b.description.substring(0,30) : '');
+      sel.appendChild(opt);
+    });
+  })
+  .catch(e => {sel.innerHTML='<option>Error: '+e+'</option>';});
+}
+</script>
 <div class="card">
   <h2>AI Provider Settings</h2>
   <form method="post" action="/settings/ai">
@@ -569,7 +692,11 @@ PRODUCTS_TPL = """
           <span>Rating: {{ p.comment_score }}</span>
           <span>Commission: {{ p.commission_rate }}%</span>
           {% if p.pin_generated %}
+          {% if p.pin_published %}
+          <span class="badge" style="background:#1a3a1a;color:#4ecb71">Published</span>
+          {% else %}
           <span class="badge badge-ok">Pinterest Ready</span>
+          {% endif %}
           {% else %}
           <span class="badge badge-warn">No Pin</span>
           {% endif %}
@@ -591,6 +718,18 @@ PRODUCTS_TPL = """
             <button class="btn btn-green btn-sm">
               Generate Pinterest</button>
           </form>
+          {% elif not p.pin_published %}
+          <form method="post"
+                action="/publish/{{ p.item_id }}"
+                style="display:inline">
+            <button class="btn btn-sm"
+                    style="background:#E60023;color:#fff">
+              Publish to Pinterest</button>
+          </form>
+          {% else %}
+          <a href="{{ p.pin_url }}" target="_blank"
+             class="btn btn-sm" style="background:#1a3a1a;color:#4ecb71">
+            View on Pinterest</a>
           {% endif %}
           {% if p.promo_url %}
           <a href="{{ p.promo_url }}" target="_blank"
@@ -760,36 +899,69 @@ PRODUCT_DETAIL_TPL = """
   </div>
 </div>
 
-{% if p.pin_generated %}
 <div class="card section">
-  <h3>Pinterest Content</h3>
-  <div class="pin-detail">
-    <div class="label">
-      Pin Title
-      <button class="copy-btn" onclick="copyText('pinTitle')">Copy</button>
-    </div>
-    <div class="value" id="pinTitle">{{ p.pin_title }}</div>
-
-    <div class="label">
-      Pin Description
-      <button class="copy-btn" onclick="copyText('pinDesc')">Copy</button>
-    </div>
-    <div class="value" id="pinDesc">{{ p.pin_description }}</div>
-
-    <div class="label">
-      Alt Text
-      <button class="copy-btn" onclick="copyText('pinAlt')">Copy</button>
-    </div>
-    <div class="value" id="pinAlt">{{ p.pin_alt_text }}</div>
+  <div style="display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e1e35;padding-bottom:6px;margin-bottom:10px">
+    <h3 style="border:none;padding:0;margin:0;color:#ff4757;font-size:15px">Pinterest Content (SEO)</h3>
   </div>
+  <form method="post" action="/save-seo/{{ p.item_id }}">
+    <div class="pin-detail" style="margin-top:10px">
+      <div class="label" style="display:flex;justify-content:space-between">
+        Pin Title
+        <button type="button" class="copy-btn" onclick="copyText('pinTitleInput')" style="margin:0">Copy</button>
+      </div>
+      <input type="text" id="pinTitleInput" name="pin_title" value="{{ p.pin_title }}" 
+             style="width:100%;background:#12121f;border:1px solid #1e1e35;color:#e0e0e0;padding:8px;border-radius:6px;margin-bottom:14px;font-size:14px">
 
+      <div class="label" style="display:flex;justify-content:space-between">
+        Pin Description
+        <button type="button" class="copy-btn" onclick="copyText('pinDescInput')" style="margin:0">Copy</button>
+      </div>
+      <textarea id="pinDescInput" name="pin_description" 
+                style="width:100%;height:100px;background:#12121f;border:1px solid #1e1e35;color:#e0e0e0;padding:8px;border-radius:6px;margin-bottom:14px;font-size:14px;resize:vertical">{{ p.pin_description }}</textarea>
+
+      <div class="label" style="display:flex;justify-content:space-between">
+        Alt Text
+        <button type="button" class="copy-btn" onclick="copyText('pinAltInput')" style="margin:0">Copy</button>
+      </div>
+      <input type="text" id="pinAltInput" name="pin_alt_text" value="{{ p.pin_alt_text }}" 
+             style="width:100%;background:#12121f;border:1px solid #1e1e35;color:#e0e0e0;padding:8px;border-radius:6px;margin-bottom:14px;font-size:14px">
+      
+      <div style="display:flex;gap:10px;margin-top:4px">
+        <button type="submit" class="btn btn-gray" style="padding:8px 16px;font-size:13px">Save Manual SEO</button>
+        {% if p.pin_generated and not p.pin_published %}
+        <span style="color:#4ecb71;font-size:13px;align-self:center">&#10003; Ready to Publish</span>
+        {% endif %}
+      </div>
+    </div>
+  </form>
+
+  {% if p.pin_generated %}
   <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    {% if not p.pin_published %}
+    <form method="post" action="/publish/{{ p.item_id }}" style="display:inline">
+      <button class="btn" style="background:#E60023;color:#fff;padding:10px 22px;
+              border-radius:8px;font-size:14px;font-weight:600;
+              display:inline-flex;align-items:center;gap:8px;border:none;cursor:pointer">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+          <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738.098.119.112.224.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z"/>
+        </svg>
+        Publish to Pinterest
+      </button>
+    </form>
+    {% else %}
+    <a href="{{ p.pin_url }}" target="_blank"
+       style="background:#1a3a1a;color:#4ecb71;padding:10px 22px;
+              border-radius:8px;font-size:14px;font-weight:600;
+              text-decoration:none;display:inline-flex;align-items:center;gap:8px">
+      &#10003; Published &mdash; View on Pinterest
+    </a>
+    {% endif %}
     <a href="https://www.pinterest.com/pin-builder/?description={{ pin_desc_encoded }}&media={{ pin_media_encoded }}&url={{ pin_url_encoded }}"
-       target="_blank" class="pinterest-share">
+       target="_blank" class="pinterest-share" style="background:#333;color:#ccc">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
         <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738.098.119.112.224.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z"/>
       </svg>
-      Share on Pinterest
+      Manual Share
     </a>
     {% if p.promo_url %}
     <button class="copy-btn" style="padding:10px 16px;font-size:13px"
@@ -797,8 +969,8 @@ PRODUCT_DETAIL_TPL = """
     <span id="affiliateUrl" style="display:none">{{ p.promo_url }}</span>
     {% endif %}
   </div>
+  {% endif %}
 </div>
-{% endif %}
 
 {% if all_images|length > 1 %}
 <div class="card section">
@@ -820,7 +992,7 @@ PRODUCT_DETAIL_TPL = """
 <script>
 function copyText(id){
   var el=document.getElementById(id);
-  var t=el.innerText||el.textContent;
+  var t=el.value !== undefined ? el.value : (el.innerText||el.textContent);
   navigator.clipboard.writeText(t).then(function(){
     var btns=document.querySelectorAll('.copy-btn');
     btns.forEach(function(b){if(b.onclick&&b.onclick.toString().indexOf(id)>-1){
@@ -966,8 +1138,23 @@ def _get_ai_keys() -> tuple[str, str]:
     return gemini, openai
 
 
+def _get_pinterest_client() -> PinterestClient | None:
+    """Build a PinterestClient from saved settings. Returns None if not configured."""
+    db = get_db()
+    token = db.get_setting("pinterest_token")
+    if not token:
+        return None
+    return PinterestClient(access_token=token)
+
+
+def _get_pinterest_board_id() -> str:
+    """Return the configured Pinterest board ID."""
+    db = get_db()
+    return db.get_setting("pinterest_board_id") or ""
+
+
 def _generate_pin_for_product(product: Product) -> bool:
-    """Generate Pinterest content and save to DB."""
+    """Generate Pinterest content and save to DB. Auto-publishes if enabled."""
     db = get_db()
     gemini_key, openai_key = _get_ai_keys()
     if not gemini_key and not openai_key:
@@ -983,7 +1170,45 @@ def _generate_pin_for_product(product: Product) -> bool:
         )
     )
     db.update_pin_content(product.item_id, pin_content)
+
+    # Auto-publish if enabled
+    auto_publish = db.get_setting("auto_publish") == "1"
+    if auto_publish:
+        _auto_publish_pin(product.item_id)
+
     return True
+
+
+def _auto_publish_pin(item_id: str) -> bool:
+    """Attempt to auto-publish a pin to Pinterest. Silently fails."""
+    db = get_db()
+    client = _get_pinterest_client()
+    board_id = _get_pinterest_board_id()
+    if not client or not board_id:
+        return False
+
+    db_product = db.get_product_by_item_id(item_id)
+    if not db_product or not db_product.pin_generated or db_product.pin_published:
+        return False
+
+    link = db_product.promo_url or db_product.item_url or ""
+    try:
+        result = asyncio.run(
+            client.create_pin(
+                board_id=board_id,
+                title=db_product.pin_title,
+                description=db_product.pin_description,
+                link=link,
+                image_url=db_product.image_url,
+                alt_text=db_product.pin_alt_text,
+            )
+        )
+        if result.success:
+            db.update_pin_published(item_id, result.pin_id or "", result.pin_url or "")
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -1075,6 +1300,24 @@ def settings_page() -> str:
 
     raw_headers = db.get_setting("raw_headers")
     parsed = parse_raw_request_headers(raw_headers) if raw_headers else {}
+    # Try to load boards if token is set
+    pinterest_token = db.get_setting("pinterest_token")
+    pinterest_board_id = db.get_setting("pinterest_board_id")
+    pinterest_boards = []
+    pinterest_board_name = ""
+    if pinterest_token:
+        try:
+            client = PinterestClient(access_token=pinterest_token)
+            boards = asyncio.run(client.get_boards())
+            pinterest_boards = [{"id": b.get("id", ""), "name": b.get("name", "")} for b in boards]
+            # Find the name of the currently selected board
+            for b in pinterest_boards:
+                if b["id"] == pinterest_board_id:
+                    pinterest_board_name = b["name"]
+                    break
+        except Exception:
+            pass
+
     return _render(
         "settings",
         page_name="settings",
@@ -1087,6 +1330,13 @@ def settings_page() -> str:
         ship_to=db.get_setting("ship_to") or "US",
         currency=db.get_setting("currency") or "USD",
         language=db.get_setting("language") or "en",
+        pinterest_token=pinterest_token,
+        pinterest_client_id=db.get_setting("pinterest_client_id") or "",
+        pinterest_client_secret=db.get_setting("pinterest_client_secret") or "",
+        pinterest_board_id=pinterest_board_id,
+        pinterest_boards=pinterest_boards,
+        pinterest_board_name=pinterest_board_name,
+        auto_publish=db.get_setting("auto_publish") == "1",
         gemini_key=db.get_setting("gemini_key"),
         openai_key=db.get_setting("openai_key"),
         cfg_db_host=config.db_host,
@@ -1114,6 +1364,74 @@ def save_ai_settings() -> str:
     db.set_setting("gemini_key", request.form.get("gemini_key", "").strip())
     db.set_setting("openai_key", request.form.get("openai_key", "").strip())
     return redirect(url_for("settings_page", msg="AI settings saved!", msg_cls="ok"))
+
+
+@app.route("/settings/pinterest", methods=["POST"])
+def save_pinterest_settings() -> str:
+    db = get_db()
+    db.set_setting("pinterest_client_id", request.form.get("pinterest_client_id", "").strip())
+    db.set_setting("pinterest_client_secret", request.form.get("pinterest_client_secret", "").strip())
+    db.set_setting("pinterest_token", request.form.get("pinterest_token", "").strip())
+    db.set_setting("pinterest_board_id", request.form.get("pinterest_board_id", "").strip())
+    db.set_setting("auto_publish", "1" if request.form.get("auto_publish") else "0")
+    return redirect(url_for("settings_page", msg="Pinterest settings saved!", msg_cls="ok"))
+
+
+@app.route("/pinterest/login")
+def pinterest_login() -> str:
+    db = get_db()
+    client_id = db.get_setting("pinterest_client_id")
+    if not client_id:
+        return redirect(url_for("settings_page", msg="Please save your App ID (Client ID) first!", msg_cls="err"))
+        
+    redirect_uri = "http://localhost:5000/pinterest/callback"
+    scopes = "boards:read,boards:write,pins:read,pins:write"
+    url = f"https://www.pinterest.com/oauth/?client_id={client_id}&redirect_uri={redirect_uri}&response_type=code&scope={scopes}"
+    return redirect(url)
+
+
+@app.route("/pinterest/callback")
+def pinterest_callback() -> str:
+    code = request.args.get("code")
+    if not code:
+        err = request.args.get("error", "Unknown error")
+        return redirect(url_for("settings_page", msg=f"Pinterest login failed: {err}", msg_cls="err"))
+        
+    db = get_db()
+    client_id = db.get_setting("pinterest_client_id")
+    client_secret = db.get_setting("pinterest_client_secret")
+    
+    if not client_id or not client_secret:
+        return redirect(url_for("settings_page", msg="App ID or Secret missing in settings.", msg_cls="err"))
+        
+    data = {
+        "grant_type": "authorization_code",
+        "code": code,
+        "redirect_uri": "http://localhost:5000/pinterest/callback"
+    }
+    
+    try:
+        with httpx.Client(timeout=10) as client:
+            resp = client.post(
+                "https://api.pinterest.com/v5/oauth/token", 
+                auth=(client_id, client_secret), 
+                data=data
+            )
+            resp.raise_for_status()
+            token_data = resp.json()
+            access_token = token_data.get("access_token")
+            if access_token:
+                db.set_setting("pinterest_token", access_token)
+                return redirect(url_for("settings_page", msg="Successfully logged in to Pinterest!", msg_cls="ok"))
+            else:
+                return redirect(url_for("settings_page", msg="Failed to get access token from response.", msg_cls="err"))
+    except Exception as e:
+        err_msg = str(e)
+        if hasattr(e, "response") and e.response:
+            err_msg += f" - {e.response.text}"
+            
+        debug_info = f" (ID length: {len(client_id)}, Secret length: {len(client_secret)}, Secret starts with: {client_secret[:3]}...)"
+        return redirect(url_for("settings_page", msg=f"Error exchanging token: {err_msg}{debug_info}", msg_cls="err"))
 
 
 @app.route("/settings/db", methods=["POST"])
@@ -1354,6 +1672,19 @@ def generate_single(item_id: str) -> str:
     return redirect(url_for("products_page", msg=msg, msg_cls=msg_cls))
 
 
+@app.route("/save-seo/<item_id>", methods=["POST"])
+def save_seo_manual(item_id: str) -> str:
+    from ae_pinner.ai_generator import PinContent
+    db = get_db()
+    pin_title = request.form.get("pin_title", "").strip()
+    pin_description = request.form.get("pin_description", "").strip()
+    pin_alt_text = request.form.get("pin_alt_text", "").strip()
+    
+    content = PinContent(title=pin_title, description=pin_description, alt_text=pin_alt_text)
+    db.update_pin_content(item_id, content)
+    return redirect(url_for("product_detail", item_id=item_id, msg="Manual SEO saved!", msg_cls="ok"))
+
+
 @app.route("/generate-all", methods=["POST"])
 def generate_all() -> str:
     db = get_db()
@@ -1376,6 +1707,107 @@ def generate_all() -> str:
     if failed:
         msg += f", {failed} failed"
     msg_cls = "ok" if generated > 0 else "err"
+    return redirect(url_for("dashboard", msg=msg, msg_cls=msg_cls))
+
+
+@app.route("/publish/<item_id>", methods=["POST"])
+def publish_single(item_id: str) -> str:
+    """Publish a single product as a pin to Pinterest via API."""
+    db = get_db()
+    db_product = db.get_product_by_item_id(item_id)
+    if not db_product:
+        return redirect(url_for("products_page", msg="Product not found", msg_cls="err"))
+    if not db_product.pin_generated:
+        return redirect(url_for("product_detail", item_id=item_id,
+                                msg="Generate Pinterest content first", msg_cls="err"))
+    if db_product.pin_published:
+        return redirect(url_for("product_detail", item_id=item_id,
+                                msg="Already published", msg_cls="ok"))
+
+    client = _get_pinterest_client()
+    if not client:
+        return redirect(url_for("settings_page",
+                                msg="Pinterest token not configured. Set it up first!",
+                                msg_cls="err"))
+    board_id = _get_pinterest_board_id()
+    if not board_id:
+        return redirect(url_for("settings_page",
+                                msg="Pinterest Board ID not configured. Set it up first!",
+                                msg_cls="err"))
+
+    link = db_product.promo_url or db_product.item_url or ""
+    try:
+        result = asyncio.run(
+            client.create_pin(
+                board_id=board_id,
+                title=db_product.pin_title,
+                description=db_product.pin_description,
+                link=link,
+                image_url=db_product.image_url,
+                alt_text=db_product.pin_alt_text,
+            )
+        )
+    except Exception as e:
+        return redirect(url_for("product_detail", item_id=item_id,
+                                msg=f"Pinterest API error: {e}", msg_cls="err"))
+
+    if result.success:
+        db.update_pin_published(item_id, result.pin_id or "", result.pin_url or "")
+        return redirect(url_for("product_detail", item_id=item_id,
+                                msg="Published to Pinterest!", msg_cls="ok"))
+    else:
+        return redirect(url_for("product_detail", item_id=item_id,
+                                msg=f"Pinterest error: {result.error}", msg_cls="err"))
+
+
+@app.route("/publish-all", methods=["POST"])
+def publish_all() -> str:
+    """Publish all ready (generated but not published) products to Pinterest."""
+    import time
+
+    client = _get_pinterest_client()
+    if not client:
+        return redirect(url_for("settings_page",
+                                msg="Pinterest token not configured!", msg_cls="err"))
+    board_id = _get_pinterest_board_id()
+    if not board_id:
+        return redirect(url_for("settings_page",
+                                msg="Pinterest Board ID not configured!", msg_cls="err"))
+
+    db = get_db()
+    ready = db.get_products_ready_to_publish()
+    published = 0
+    failed = 0
+
+    for db_product in ready:
+        link = db_product.promo_url or db_product.item_url or ""
+        try:
+            result = asyncio.run(
+                client.create_pin(
+                    board_id=board_id,
+                    title=db_product.pin_title,
+                    description=db_product.pin_description,
+                    link=link,
+                    image_url=db_product.image_url,
+                    alt_text=db_product.pin_alt_text,
+                )
+            )
+            if result.success:
+                db.update_pin_published(
+                    db_product.item_id, result.pin_id or "", result.pin_url or ""
+                )
+                published += 1
+            else:
+                failed += 1
+        except Exception:
+            failed += 1
+        # Rate limiting: 1 second delay between pins
+        time.sleep(1)
+
+    msg = f"Published {published} pins to Pinterest"
+    if failed:
+        msg += f", {failed} failed"
+    msg_cls = "ok" if published > 0 else "err"
     return redirect(url_for("dashboard", msg=msg, msg_cls=msg_cls))
 
 
@@ -1560,6 +1992,86 @@ def api_generate(item_id: str):
     )
 
 
+@app.route("/api/publish/<item_id>", methods=["POST"])
+def api_publish(item_id: str):
+    """POST /api/publish/<item_id> - Publish a product as a pin to Pinterest."""
+    db = get_db()
+    db_product = db.get_product_by_item_id(item_id)
+    if not db_product:
+        return jsonify({"error": "not found"}), 404
+    if not db_product.pin_generated:
+        return jsonify({"error": "Pinterest content not generated yet"}), 400
+    if db_product.pin_published:
+        return jsonify({
+            "item_id": item_id,
+            "already_published": True,
+            "pin_id": db_product.pin_id,
+            "pin_url": db_product.pin_url,
+        })
+
+    client = _get_pinterest_client()
+    if not client:
+        return jsonify({"error": "Pinterest token not configured"}), 400
+    board_id = _get_pinterest_board_id()
+    if not board_id:
+        return jsonify({"error": "Pinterest board ID not configured"}), 400
+
+    link = db_product.promo_url or db_product.item_url or ""
+    try:
+        result = asyncio.run(
+            client.create_pin(
+                board_id=board_id,
+                title=db_product.pin_title,
+                description=db_product.pin_description,
+                link=link,
+                image_url=db_product.image_url,
+                alt_text=db_product.pin_alt_text,
+            )
+        )
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    if result.success:
+        db.update_pin_published(item_id, result.pin_id or "", result.pin_url or "")
+        return jsonify({
+            "item_id": item_id,
+            "pin_id": result.pin_id,
+            "pin_url": result.pin_url,
+            "published": True,
+        })
+    else:
+        return jsonify({"error": result.error}), 500
+
+
+@app.route("/api/pinterest/boards", methods=["POST"])
+def api_pinterest_boards():
+    """POST /api/pinterest/boards - Fetch boards for a Pinterest token."""
+    data = request.get_json(force=True) or {}
+    token = data.get("token", "").strip()
+    if not token:
+        # Fall back to saved token
+        db = get_db()
+        token = db.get_setting("pinterest_token")
+    if not token:
+        return jsonify({"error": "No token provided"}), 400
+
+    try:
+        client = PinterestClient(access_token=token)
+        boards = asyncio.run(client.get_boards())
+        return jsonify({
+            "boards": [
+                {
+                    "id": b.get("id", ""),
+                    "name": b.get("name", ""),
+                    "description": b.get("description", ""),
+                }
+                for b in boards
+            ]
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/settings", methods=["GET"])
 def api_get_settings():
     """GET /api/settings - Current settings (cookies masked)."""
@@ -1576,6 +2088,9 @@ def api_get_settings():
             "language": db.get_setting("language") or "en",
             "gemini_key_set": bool(db.get_setting("gemini_key")),
             "openai_key_set": bool(db.get_setting("openai_key")),
+            "pinterest_token_set": bool(db.get_setting("pinterest_token")),
+            "pinterest_board_id": db.get_setting("pinterest_board_id") or "",
+            "auto_publish": db.get_setting("auto_publish") == "1",
         }
     )
 
@@ -1594,6 +2109,9 @@ def api_save_settings():
         "language",
         "gemini_key",
         "openai_key",
+        "pinterest_token",
+        "pinterest_board_id",
+        "auto_publish",
     )
     updated = []
     for key in allowed:

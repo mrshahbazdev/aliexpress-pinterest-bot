@@ -39,6 +39,10 @@ class DBProduct:
     pin_description: str
     pin_alt_text: str
     pin_generated: bool
+    pin_published: bool
+    pin_id: str
+    pin_url: str
+    pin_published_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -73,6 +77,10 @@ CREATE TABLE IF NOT EXISTS products (
     pin_description VARCHAR(2000) NOT NULL DEFAULT '',
     pin_alt_text    VARCHAR(1000) NOT NULL DEFAULT '',
     pin_generated   BOOLEAN      NOT NULL DEFAULT FALSE,
+    pin_published   BOOLEAN      NOT NULL DEFAULT FALSE,
+    pin_id          VARCHAR(128) NOT NULL DEFAULT '',
+    pin_url         VARCHAR(500) NOT NULL DEFAULT '',
+    pin_published_at DATETIME    NULL DEFAULT NULL,
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
                                  ON UPDATE CURRENT_TIMESTAMP
@@ -116,6 +124,10 @@ class Database:
     _MIGRATE_COLS = (
         ("raw_json", "LONGTEXT NOT NULL"),
         ("promo_response", "LONGTEXT NOT NULL"),
+        ("pin_published", "BOOLEAN NOT NULL DEFAULT FALSE"),
+        ("pin_id", "VARCHAR(128) NOT NULL DEFAULT ''"),
+        ("pin_url", "VARCHAR(500) NOT NULL DEFAULT ''"),
+        ("pin_published_at", "DATETIME NULL DEFAULT NULL"),
     )
 
     def _migrate_add_columns(self) -> None:
@@ -318,7 +330,9 @@ class Database:
                 SELECT
                     COUNT(*) AS total,
                     SUM(pin_generated) AS with_pins,
-                    COUNT(*) - SUM(pin_generated) AS without_pins
+                    COUNT(*) - SUM(pin_generated) AS without_pins,
+                    SUM(CASE WHEN pin_published THEN 1 ELSE 0 END) AS published,
+                    SUM(CASE WHEN pin_generated AND NOT pin_published THEN 1 ELSE 0 END) AS ready_to_publish
                 FROM products
                 """
             )
@@ -328,7 +342,46 @@ class Database:
                 "total": row["total"] or 0,
                 "with_pins": int(row["with_pins"] or 0),
                 "without_pins": int(row["without_pins"] or 0),
+                "published": int(row.get("published") or 0),
+                "ready_to_publish": int(row.get("ready_to_publish") or 0),
             }
+        finally:
+            conn.close()
+
+    def update_pin_published(
+        self, item_id: str, pin_id: str, pin_url: str
+    ) -> bool:
+        """Mark a product as published on Pinterest."""
+        conn = self._conn()
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                """
+                UPDATE products
+                SET pin_published = TRUE, pin_id = %s, pin_url = %s,
+                    pin_published_at = NOW()
+                WHERE item_id = %s
+                """,
+                (pin_id, pin_url, item_id),
+            )
+            affected = cur.rowcount
+            cur.close()
+            return affected > 0
+        finally:
+            conn.close()
+
+    def get_products_ready_to_publish(self) -> list[DBProduct]:
+        """Get products with Pinterest content generated but not yet published."""
+        conn = self._conn()
+        try:
+            cur = conn.cursor(dictionary=True)
+            cur.execute(
+                "SELECT * FROM products WHERE pin_generated = TRUE AND pin_published = FALSE "
+                "ORDER BY created_at DESC"
+            )
+            rows = cur.fetchall()
+            cur.close()
+            return [self._row_to_dbproduct(r) for r in rows]
         finally:
             conn.close()
 
@@ -367,6 +420,10 @@ class Database:
             pin_description=row["pin_description"],
             pin_alt_text=row["pin_alt_text"],
             pin_generated=bool(row["pin_generated"]),
+            pin_published=bool(row.get("pin_published", False)),
+            pin_id=row.get("pin_id", ""),
+            pin_url=row.get("pin_url", ""),
+            pin_published_at=row.get("pin_published_at"),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
