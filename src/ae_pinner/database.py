@@ -104,22 +104,37 @@ class Database:
             cur = conn.cursor()
             cur.execute(_CREATE_SETTINGS_TABLE)
             cur.execute(_CREATE_PRODUCTS_TABLE)
-            self._migrate_add_columns(cur)
             cur.close()
+            conn.commit()
         finally:
             conn.close()
+        self._migrate_add_columns()
 
-    @staticmethod
-    def _migrate_add_columns(cur) -> None:
+    def _migrate_add_columns(self) -> None:
         """Add columns introduced after initial schema."""
         for col, col_def in (
             ("raw_json", "LONGTEXT NOT NULL DEFAULT ''"),
             ("promo_response", "LONGTEXT NOT NULL DEFAULT ''"),
         ):
+            conn = self._conn()
             try:
-                cur.execute(f"ALTER TABLE products ADD COLUMN {col} {col_def}")
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT COUNT(*) FROM information_schema.COLUMNS "
+                    "WHERE TABLE_SCHEMA = DATABASE() "
+                    "AND TABLE_NAME = 'products' AND COLUMN_NAME = %s",
+                    (col,),
+                )
+                if cur.fetchone()[0] == 0:
+                    cur.execute(
+                        f"ALTER TABLE products ADD COLUMN {col} {col_def}"
+                    )
+                    conn.commit()
+                cur.close()
             except Exception:
                 pass
+            finally:
+                conn.close()
 
     def get_setting(self, key: str) -> str:
         """Get a setting value by key. Returns empty string if not found."""
