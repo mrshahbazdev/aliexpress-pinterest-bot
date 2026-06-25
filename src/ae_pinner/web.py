@@ -14,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import urllib.parse
 
 from flask import Flask, jsonify, redirect, request, url_for
 
@@ -547,10 +548,15 @@ PRODUCTS_TPL = """
   <div class="pgrid">
   {% for p in products %}
     <div class="pcard">
-      <img src="{{ p.image_url }}" alt="{{ p.title[:40] }}"
-           loading="lazy">
+      <a href="/product/{{ p.item_id }}" style="text-decoration:none;color:inherit">
+        <img src="{{ p.image_url }}" alt="{{ p.title[:40] }}"
+             loading="lazy">
+      </a>
       <div class="body">
-        <div class="ttl">{{ p.title }}</div>
+        <a href="/product/{{ p.item_id }}"
+           style="text-decoration:none;color:inherit">
+          <div class="ttl">{{ p.title }}</div>
+        </a>
         <div class="prices">
           <span class="price">{{ p.discount_price }}</span>
           <span class="oprice">{{ p.original_price }}</span>
@@ -561,6 +567,7 @@ PRODUCTS_TPL = """
         <div class="meta">
           <span>Sales: {{ p.sales_30day }}</span>
           <span>Rating: {{ p.comment_score }}</span>
+          <span>Commission: {{ p.commission_rate }}%</span>
           {% if p.pin_generated %}
           <span class="badge badge-ok">Pinterest Ready</span>
           {% else %}
@@ -575,6 +582,8 @@ PRODUCTS_TPL = """
         </div>
         {% endif %}
         <div class="acts" style="margin-top:10px">
+          <a href="/product/{{ p.item_id }}"
+             class="btn btn-red btn-sm">View Details</a>
           {% if not p.pin_generated %}
           <form method="post"
                 action="/generate/{{ p.item_id }}"
@@ -585,7 +594,7 @@ PRODUCTS_TPL = """
           {% endif %}
           {% if p.promo_url %}
           <a href="{{ p.promo_url }}" target="_blank"
-             class="btn btn-gray btn-sm">Promo Link</a>
+             class="btn btn-gray btn-sm">Affiliate Link</a>
           {% endif %}
           <a href="{{ p.item_url }}" target="_blank"
              class="btn btn-gray btn-sm">AliExpress</a>
@@ -622,6 +631,209 @@ PRODUCTS_TPL = """
 
 
 # ---------------------------------------------------------------------------
+# Product detail template
+# ---------------------------------------------------------------------------
+
+PRODUCT_DETAIL_TPL = """
+{% extends "master" %}
+{% block content %}
+<style>
+.detail-top{display:grid;grid-template-columns:400px 1fr;gap:24px}
+@media(max-width:800px){.detail-top{grid-template-columns:1fr}}
+.detail-imgs{display:flex;flex-direction:column;gap:10px}
+.detail-imgs .main-img{width:100%;border-radius:10px;
+     border:1px solid #1e1e35;object-fit:cover;max-height:400px}
+.detail-imgs .thumbs{display:flex;gap:6px;flex-wrap:wrap}
+.detail-imgs .thumbs img{width:64px;height:64px;object-fit:cover;
+     border-radius:6px;border:1px solid #1e1e35;cursor:pointer;
+     transition:.2s;opacity:.7}
+.detail-imgs .thumbs img:hover,.detail-imgs .thumbs img.active{
+     opacity:1;border-color:#ff4757}
+.detail-info h2{font-size:20px;color:#e0e0e0;margin-bottom:12px;
+     line-height:1.4}
+.detail-info .prices{display:flex;align-items:center;gap:12px;
+     margin-bottom:14px}
+.detail-info .price{font-size:28px;font-weight:700;color:#ff4757}
+.detail-info .oprice{font-size:16px;color:#555;text-decoration:line-through}
+.detail-info .disc{background:#ff4757;color:#fff;padding:3px 10px;
+     border-radius:5px;font-size:13px;font-weight:700}
+.detail-row{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.detail-stat{background:#0a0a0f;border:1px solid #1e1e35;
+     border-radius:8px;padding:10px 16px;text-align:center;min-width:120px}
+.detail-stat .n{font-size:18px;font-weight:700;color:#ff4757}
+.detail-stat .l{font-size:11px;color:#666;margin-top:2px}
+.detail-links{display:flex;gap:8px;flex-wrap:wrap;margin-top:16px}
+.detail-links .btn{padding:10px 20px;font-size:14px}
+.section{margin-top:20px}
+.section h3{color:#ff4757;font-size:15px;margin-bottom:10px;
+     border-bottom:1px solid #1e1e35;padding-bottom:6px}
+.pin-detail{background:#0a0a0f;border:1px solid #1a1a30;
+     border-radius:10px;padding:16px;margin-top:10px}
+.pin-detail .label{font-size:11px;color:#666;text-transform:uppercase;
+     letter-spacing:.5px;margin-bottom:3px}
+.pin-detail .value{color:#e0e0e0;font-size:14px;margin-bottom:14px;
+     line-height:1.6}
+.pin-detail .value:last-child{margin-bottom:0}
+.copy-btn{background:#222238;color:#aaa;border:1px solid #333;
+     padding:4px 10px;border-radius:5px;cursor:pointer;font-size:11px;
+     margin-left:8px;transition:.15s}
+.copy-btn:hover{background:#2a2a45;color:#fff}
+.pinterest-share{background:#E60023;color:#fff;padding:10px 22px;
+     border-radius:8px;font-size:14px;font-weight:600;
+     text-decoration:none;display:inline-flex;align-items:center;gap:8px}
+.pinterest-share:hover{background:#c2001e}
+</style>
+
+<div style="margin-bottom:14px">
+  <a href="/products" class="btn btn-gray">&larr; Back to Products</a>
+</div>
+
+<div class="card">
+  <div class="detail-top">
+    <div class="detail-imgs">
+      <img class="main-img" id="mainImg"
+           src="{{ p.image_url }}" alt="{{ p.title[:60] }}">
+      {% if all_images|length > 1 %}
+      <div class="thumbs">
+        {% for img in all_images %}
+        <img src="{{ img }}" alt="Image {{ loop.index }}"
+             onclick="document.getElementById('mainImg').src=this.src;
+                      document.querySelectorAll('.thumbs img').forEach(i=>i.classList.remove('active'));
+                      this.classList.add('active')"
+             class="{{ 'active' if loop.first }}">
+        {% endfor %}
+      </div>
+      {% endif %}
+    </div>
+
+    <div class="detail-info">
+      <h2>{{ p.title }}</h2>
+      <div class="prices">
+        <span class="price">{{ p.discount_price }}</span>
+        <span class="oprice">{{ p.original_price }}</span>
+        {% if p.discount_rate %}
+        <span class="disc">{{ p.discount_rate }}% OFF</span>
+        {% endif %}
+      </div>
+
+      <div class="detail-row">
+        <div class="detail-stat">
+          <div class="n">{{ p.sales_30day }}</div>
+          <div class="l">Sales (30 day)</div>
+        </div>
+        <div class="detail-stat">
+          <div class="n">{{ p.comment_score }}</div>
+          <div class="l">Rating</div>
+        </div>
+        <div class="detail-stat">
+          <div class="n">{{ p.commission_rate }}%</div>
+          <div class="l">Commission</div>
+        </div>
+      </div>
+
+      <div class="detail-stat" style="text-align:left;margin-bottom:14px;width:100%">
+        <div class="l">Item ID</div>
+        <div style="color:#e0e0e0;font-size:13px;word-break:break-all">{{ p.item_id }}</div>
+      </div>
+
+      <div class="detail-links">
+        {% if p.promo_url %}
+        <a href="{{ p.promo_url }}" target="_blank"
+           class="btn btn-red">Affiliate Link</a>
+        {% endif %}
+        <a href="{{ p.item_url }}" target="_blank"
+           class="btn btn-gray">View on AliExpress</a>
+        {% if not p.pin_generated %}
+        <form method="post" action="/generate/{{ p.item_id }}"
+              style="display:inline">
+          <button class="btn btn-green">Generate Pinterest SEO</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/delete/{{ p.item_id }}"
+              style="display:inline"
+              onsubmit="return confirm('Delete this product?')">
+          <button class="btn"
+                  style="background:#2a1520;color:#ea3943">Delete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if p.pin_generated %}
+<div class="card section">
+  <h3>Pinterest Content</h3>
+  <div class="pin-detail">
+    <div class="label">
+      Pin Title
+      <button class="copy-btn" onclick="copyText('pinTitle')">Copy</button>
+    </div>
+    <div class="value" id="pinTitle">{{ p.pin_title }}</div>
+
+    <div class="label">
+      Pin Description
+      <button class="copy-btn" onclick="copyText('pinDesc')">Copy</button>
+    </div>
+    <div class="value" id="pinDesc">{{ p.pin_description }}</div>
+
+    <div class="label">
+      Alt Text
+      <button class="copy-btn" onclick="copyText('pinAlt')">Copy</button>
+    </div>
+    <div class="value" id="pinAlt">{{ p.pin_alt_text }}</div>
+  </div>
+
+  <div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <a href="https://www.pinterest.com/pin-builder/?description={{ pin_desc_encoded }}&media={{ pin_media_encoded }}&url={{ pin_url_encoded }}"
+       target="_blank" class="pinterest-share">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+        <path d="M12 0C5.373 0 0 5.373 0 12c0 5.084 3.163 9.426 7.627 11.174-.105-.949-.2-2.405.042-3.441.218-.937 1.407-5.965 1.407-5.965s-.359-.719-.359-1.782c0-1.668.967-2.914 2.171-2.914 1.023 0 1.518.769 1.518 1.69 0 1.029-.655 2.568-.994 3.995-.283 1.194.599 2.169 1.777 2.169 2.133 0 3.772-2.249 3.772-5.495 0-2.873-2.064-4.882-5.012-4.882-3.414 0-5.418 2.561-5.418 5.207 0 1.031.397 2.138.893 2.738.098.119.112.224.083.345l-.333 1.36c-.053.22-.174.267-.402.161-1.499-.698-2.436-2.889-2.436-4.649 0-3.785 2.75-7.262 7.929-7.262 4.163 0 7.398 2.967 7.398 6.931 0 4.136-2.607 7.464-6.227 7.464-1.216 0-2.359-.632-2.75-1.378l-.748 2.853c-.271 1.043-1.002 2.35-1.492 3.146C9.57 23.812 10.763 24 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0z"/>
+      </svg>
+      Share on Pinterest
+    </a>
+    {% if p.promo_url %}
+    <button class="copy-btn" style="padding:10px 16px;font-size:13px"
+            onclick="copyText('affiliateUrl')">Copy Affiliate Link</button>
+    <span id="affiliateUrl" style="display:none">{{ p.promo_url }}</span>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% if all_images|length > 1 %}
+<div class="card section">
+  <h3>All Product Images ({{ all_images|length }})</h3>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin-top:10px">
+    {% for img in all_images %}
+    <a href="{{ img }}" target="_blank">
+      <img src="{{ img }}" alt="Product image {{ loop.index }}"
+           style="width:100%;height:150px;object-fit:cover;border-radius:8px;
+                  border:1px solid #1e1e35;transition:.2s"
+           onmouseover="this.style.borderColor='#ff4757'"
+           onmouseout="this.style.borderColor='#1e1e35'">
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<script>
+function copyText(id){
+  var el=document.getElementById(id);
+  var t=el.innerText||el.textContent;
+  navigator.clipboard.writeText(t).then(function(){
+    var btns=document.querySelectorAll('.copy-btn');
+    btns.forEach(function(b){if(b.onclick&&b.onclick.toString().indexOf(id)>-1){
+      var orig=b.textContent;b.textContent='Copied!';
+      setTimeout(function(){b.textContent=orig},1500)}})
+  })
+}
+</script>
+{% endblock %}
+"""
+
+
+# ---------------------------------------------------------------------------
 # Template engine (inline Jinja2)
 # ---------------------------------------------------------------------------
 
@@ -632,6 +844,7 @@ _TEMPLATES: dict[str, str] = {
     "settings": SETTINGS_TPL,
     "fetch": FETCH_TPL,
     "products": PRODUCTS_TPL,
+    "product_detail": PRODUCT_DETAIL_TPL,
 }
 
 
@@ -1084,6 +1297,37 @@ def products_page() -> str:
         current_page=page,
         total_pages=total_pages,
         pending_count=stats["without_pins"],
+    )
+
+
+@app.route("/product/<item_id>")
+def product_detail(item_id: str) -> str:
+    db = get_db()
+    p = db.get_product_by_item_id(item_id)
+    if not p:
+        return redirect(url_for("products_page", msg="Product not found", msg_cls="err"))
+
+    all_images = [i for i in p.all_images.split(",") if i] if p.all_images else []
+    if p.image_url and p.image_url not in all_images:
+        all_images.insert(0, p.image_url)
+
+    pin_desc_encoded = ""
+    pin_media_encoded = ""
+    pin_url_encoded = ""
+    if p.pin_generated:
+        pin_desc_encoded = urllib.parse.quote(p.pin_description or "", safe="")
+        pin_media_encoded = urllib.parse.quote(p.image_url or "", safe="")
+        link = p.promo_url or p.item_url or ""
+        pin_url_encoded = urllib.parse.quote(link, safe="")
+
+    return _render(
+        "product_detail",
+        page_name="products",
+        p=p,
+        all_images=all_images,
+        pin_desc_encoded=pin_desc_encoded,
+        pin_media_encoded=pin_media_encoded,
+        pin_url_encoded=pin_url_encoded,
     )
 
 
