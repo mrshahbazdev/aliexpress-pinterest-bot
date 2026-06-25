@@ -471,7 +471,7 @@ FETCH_TPL = """
       <input type="hidden" name="page" value="{{ page_num }}">
       <input type="hidden" name="count" value="{{ count }}">
       <input type="hidden" name="products_json"
-             value="{{ products_json }}">
+             value="{{ products_json | e }}">
       <button type="submit" name="action" value="save"
               class="btn btn-green">Save All to DB</button>
       <button type="submit" name="action" value="save_gen"
