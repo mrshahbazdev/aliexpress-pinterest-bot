@@ -30,6 +30,8 @@ class DBProduct:
     commission_rate: str
     item_url: str
     promo_url: str
+    raw_json: str
+    promo_response: str
     pin_title: str
     pin_description: str
     pin_alt_text: str
@@ -62,6 +64,8 @@ CREATE TABLE IF NOT EXISTS products (
     commission_rate VARCHAR(16)  NOT NULL DEFAULT '',
     item_url        VARCHAR(2000) NOT NULL DEFAULT '',
     promo_url       VARCHAR(2000) NOT NULL DEFAULT '',
+    raw_json        LONGTEXT     NOT NULL,
+    promo_response  LONGTEXT     NOT NULL,
     pin_title       VARCHAR(500) NOT NULL DEFAULT '',
     pin_description VARCHAR(2000) NOT NULL DEFAULT '',
     pin_alt_text    VARCHAR(1000) NOT NULL DEFAULT '',
@@ -100,9 +104,22 @@ class Database:
             cur = conn.cursor()
             cur.execute(_CREATE_SETTINGS_TABLE)
             cur.execute(_CREATE_PRODUCTS_TABLE)
+            self._migrate_add_columns(cur)
             cur.close()
         finally:
             conn.close()
+
+    @staticmethod
+    def _migrate_add_columns(cur) -> None:
+        """Add columns introduced after initial schema."""
+        for col, col_def in (
+            ("raw_json", "LONGTEXT NOT NULL DEFAULT ''"),
+            ("promo_response", "LONGTEXT NOT NULL DEFAULT ''"),
+        ):
+            try:
+                cur.execute(f"ALTER TABLE products ADD COLUMN {col} {col_def}")
+            except Exception:
+                pass
 
     def get_setting(self, key: str) -> str:
         """Get a setting value by key. Returns empty string if not found."""
@@ -159,9 +176,9 @@ class Database:
                     (item_id, main_item_id, title, image_url, all_images,
                      original_price, discount_price, discount_rate,
                      sales_30day, comment_score, commission_rate,
-                     item_url, promo_url,
+                     item_url, promo_url, raw_json, promo_response,
                      pin_title, pin_description, pin_alt_text, pin_generated)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
                 (
                     product.item_id,
@@ -177,6 +194,8 @@ class Database:
                     product.commission_rate,
                     product.item_url,
                     product.promo_url or "",
+                    product.raw_json,
+                    product.promo_response,
                     pin_content.title if pin_content else "",
                     pin_content.description if pin_content else "",
                     pin_content.alt_text if pin_content else "",
@@ -309,6 +328,8 @@ class Database:
             commission_rate=row["commission_rate"],
             item_url=row["item_url"],
             promo_url=row["promo_url"],
+            raw_json=row.get("raw_json", ""),
+            promo_response=row.get("promo_response", ""),
             pin_title=row["pin_title"],
             pin_description=row["pin_description"],
             pin_alt_text=row["pin_alt_text"],

@@ -6,6 +6,7 @@ Supports both individual cookie values and full raw cookie strings from browser 
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 import httpx
@@ -28,6 +29,8 @@ class Product:
     commission_rate: str
     item_url: str
     promo_url: str | None = None
+    raw_json: str = ""
+    promo_response: str = ""
 
 
 def parse_cookie_string(raw_cookie: str) -> dict[str, str]:
@@ -201,6 +204,7 @@ class AliExpressClient:
                     comment_score=item.get("commentScore", ""),
                     commission_rate=item.get("directCommissionRate", ""),
                     item_url=item.get("itemUrl", ""),
+                    raw_json=json.dumps(item, default=str),
                 )
             )
 
@@ -274,7 +278,7 @@ class AliExpressClient:
         currency: str = "USD",
         language: str = "en",
     ) -> list[Product]:
-        """Fetch products and attach promo links to each."""
+        """Fetch products and attach promo details to each."""
         products = await self.fetch_recommended_products(
             page_num=page_num,
             page_size=page_size,
@@ -284,11 +288,13 @@ class AliExpressClient:
         )
 
         for product in products:
-            promo_url = await self.get_promo_link(
+            details = await self.get_promo_details(
                 product_id=product.item_id,
                 ship_to=ship_to,
                 currency=currency,
             )
-            product.promo_url = promo_url
+            if details:
+                product.promo_url = details.get("promoteUrl")
+                product.promo_response = json.dumps(details, default=str)
 
         return products
