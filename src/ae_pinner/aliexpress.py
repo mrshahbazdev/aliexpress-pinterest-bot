@@ -6,6 +6,7 @@ Supports both individual cookie values and full raw cookie strings from browser 
 
 from __future__ import annotations
 
+import asyncio
 import json
 from dataclasses import dataclass
 
@@ -278,7 +279,7 @@ class AliExpressClient:
         currency: str = "USD",
         language: str = "en",
     ) -> list[Product]:
-        """Fetch products and attach promo details to each."""
+        """Fetch products and attach promo details to each (concurrently)."""
         products = await self.fetch_recommended_products(
             page_num=page_num,
             page_size=page_size,
@@ -287,14 +288,24 @@ class AliExpressClient:
             language=language,
         )
 
-        for product in products:
-            details = await self.get_promo_details(
-                product_id=product.item_id,
-                ship_to=ship_to,
-                currency=currency,
-            )
-            if details:
-                product.promo_url = details.get("promoteUrl")
-                product.promo_response = json.dumps(details, default=str)
+        semaphore = asyncio.Semaphore(5)
+
+        async def _attach_promo(product: Product) -> None:
+            async with semaphore:
+                try:
+                    details = await self.get_promo_details(
+                        product_id=product.item_id,
+                        ship_to=ship_to,
+                        currency=currency,
+                    )
+                    if details:
+                        product.promo_url = details.get("promoteUrl")
+                        product.promo_response = json.dumps(details, default=str)
+                except Exception:
+                    pass
+
+        await asyncio.gather(
+            *(_attach_promo(p) for p in products), return_exceptions=True
+        )
 
         return products

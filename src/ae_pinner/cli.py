@@ -9,8 +9,10 @@ import click
 from rich.console import Console
 
 from ae_pinner.ai_generator import AIProvider
+from ae_pinner.automation import AutomationPlan, run_automation
 from ae_pinner.bot import run_bot
 from ae_pinner.config import Config
+from ae_pinner.database import Database
 
 console = Console()
 
@@ -225,6 +227,90 @@ def init_db(env_file: str | None):
         console.print("[green]Database tables created successfully![/]")
     except Exception as e:
         console.print(f"[red]Failed to initialize database:[/] {e}")
+        sys.exit(1)
+
+
+@main.command()
+@click.option(
+    "--plan",
+    type=click.Path(exists=True, dir_okay=False),
+    help="JSON/YAML automation plan file",
+)
+@click.option("--pages", default=1, help="Number of pages to process")
+@click.option("--page", default=1, help="Starting page number")
+@click.option("--count", default=12, help="Products per page (max 12)")
+@click.option(
+    "--ai",
+    type=click.Choice(["gemini", "openai"]),
+    default="gemini",
+    help="AI provider for generating descriptions",
+)
+@click.option("--save", is_flag=True, help="Save fetched products to the database")
+@click.option("--publish", is_flag=True, help="Automatically publish pins to Pinterest")
+@click.option("--skip-generate", is_flag=True, help="Skip AI content generation")
+@click.option("--dry-run", is_flag=True, help="Preview without creating pins")
+@click.option("--delay", default=3.0, help="Seconds to wait between pages")
+@click.option("--pin-delay", default=1.5, help="Seconds to wait between pins")
+@click.option("--interval", default=0.0, help="Repeat every N minutes (0 = run once)")
+@click.option("--max-runs", default=None, type=int, help="Limit scheduled repetitions")
+@click.option("--env-file", default=None, help="Path to .env file")
+def auto(
+    plan: str | None,
+    pages: int,
+    page: int,
+    count: int,
+    ai: str,
+    save: bool,
+    publish: bool,
+    skip_generate: bool,
+    dry_run: bool,
+    delay: float,
+    pin_delay: float,
+    interval: float,
+    max_runs: int | None,
+    env_file: str | None,
+):
+    """Run the advanced automation pipeline: fetch -> generate -> publish."""
+    config = Config.load(env_file)
+
+    if plan:
+        auto_plan = AutomationPlan.load(plan)
+    else:
+        auto_plan = AutomationPlan(
+            pages=pages,
+            page=page,
+            page_size=count,
+            ai=ai,
+            save=save,
+            generate=not skip_generate,
+            publish=publish,
+            dry_run=dry_run,
+            page_delay=delay,
+            pin_delay=pin_delay,
+            interval_minutes=interval,
+            max_runs=max_runs,
+        )
+
+    db = None
+    if auto_plan.save:
+        if not config.db_configured:
+            console.print("[red]--save requires DB_HOST, DB_NAME, DB_USER, DB_PASSWORD[/]")
+            sys.exit(1)
+        db = Database(
+            host=config.db_host,
+            port=config.db_port,
+            name=config.db_name,
+            user=config.db_user,
+            password=config.db_password,
+        )
+
+    try:
+        asyncio.run(run_automation(config, auto_plan, db=db))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Automation stopped by user.[/]")
+        sys.exit(0)
+    except Exception as exc:
+        console.print(f"[red]Automation failed:[/] {exc}")
         sys.exit(1)
 
 
