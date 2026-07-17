@@ -117,12 +117,20 @@ All API endpoints return JSON. Base URL: `http://localhost:5000`
 
 ### Products
 
-| Method   | Endpoint                  | Description                |
-|----------|---------------------------|----------------------------|
-| `GET`    | `/api/products`           | List saved products        |
-| `GET`    | `/api/products/<item_id>` | Get single product         |
-| `DELETE` | `/api/products/<item_id>` | Delete a product           |
-| `GET`    | `/api/stats`              | Product statistics         |
+| Method   | Endpoint                     | Description                        |
+|----------|------------------------------|------------------------------------|
+| `GET`    | `/api/products`              | List saved products                |
+| `GET`    | `/api/products/<item_id>`    | Get single product                 |
+| `DELETE` | `/api/products/<item_id>`    | Delete a product                   |
+| `GET`    | `/api/stats`                 | Product statistics                 |
+| `GET`    | `/api/store/products`        | Public storefront product listing  |
+
+#### Public Storefront
+
+The web UI includes a public storefront at `/store` where saved AliExpress products are
+listed with search and pagination. Each product has a detail page at `/store/<item_id>`
+and a public JSON API at `/api/store/products?page=1&per_page=20&q=search`.
+
 
 #### List Products
 
