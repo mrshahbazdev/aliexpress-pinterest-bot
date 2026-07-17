@@ -280,6 +280,43 @@ ae-pinner verify
 ae-pinner init-db
 ```
 
+### `ae-pinner auto` — Advanced automation
+
+Run the full pipeline across multiple pages, save to the database, and optionally
+repeat on a schedule.
+
+```bash
+# One-command full automation (fetch + generate + publish)
+ae-pinner auto --pages 3 --publish --save --ai gemini
+
+# Dry run to preview without creating pins
+ae-pinner auto --pages 2 --publish --dry-run
+
+# Repeat every 60 minutes, up to 5 times
+ae-pinner auto --pages 2 --publish --save --interval 60 --max-runs 5
+
+# Load a reusable plan from a JSON/YAML file
+ae-pinner auto --plan examples/auto-plan.yaml
+```
+
+| Option           | Default | Description                              |
+|------------------|---------|------------------------------------------|
+| `--plan`         | —       | Path to JSON/YAML automation plan        |
+| `--pages`        | `1`     | Number of pages to process               |
+| `--page`         | `1`     | Starting page number                     |
+| `--count`        | `12`    | Products per page (max 12)               |
+| `--ai`           | `gemini`| AI provider (`gemini` or `openai`)       |
+| `--save`         | off     | Save fetched products to the database    |
+| `--publish`      | off     | Auto-publish pins to Pinterest           |
+| `--skip-generate`| off     | Skip AI content generation               |
+| `--dry-run`      | off     | Preview without creating pins            |
+| `--delay`        | `3`     | Seconds between pages                    |
+| `--pin-delay`    | `1.5`   | Seconds between pin creations            |
+| `--interval`     | `0`     | Repeat every N minutes (0 = once)         |
+| `--max-runs`     | —       | Limit scheduled repetitions              |
+
+See `examples/auto-plan.yaml` for a reusable plan template.
+
 ---
 
 ## Configuration Storage
@@ -302,14 +339,17 @@ Config file locations:
 aliexpress-pinterest-bot/
 ├── src/ae_pinner/
 │   ├── __init__.py        # Package metadata
-│   ├── cli.py             # CLI commands (web, run, boards, verify)
+│   ├── cli.py             # CLI commands (web, run, auto, boards, verify)
 │   ├── config.py          # Config loader (JSON + .env fallback)
 │   ├── web.py             # Flask web UI + REST API
 │   ├── database.py        # MySQL connection + CRUD operations
 │   ├── aliexpress.py      # AliExpress API client
 │   ├── ai_generator.py    # AI pin content (Gemini + OpenAI)
 │   ├── pinterest.py       # Pinterest API v5
-│   └── bot.py             # Main pipeline orchestrator
+│   ├── bot.py             # Main pipeline orchestrator
+│   └── automation.py      # Advanced automation engine
+├── examples/
+│   └── auto-plan.yaml     # Reusable automation plan template
 ├── .env.example           # Template (optional, for CLI mode)
 ├── pyproject.toml         # Python package config
 └── README.md

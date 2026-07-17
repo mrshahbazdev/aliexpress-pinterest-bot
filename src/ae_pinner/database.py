@@ -332,7 +332,8 @@ class Database:
                     SUM(pin_generated) AS with_pins,
                     COUNT(*) - SUM(pin_generated) AS without_pins,
                     SUM(CASE WHEN pin_published THEN 1 ELSE 0 END) AS published,
-                    SUM(CASE WHEN pin_generated AND NOT pin_published THEN 1 ELSE 0 END) AS ready_to_publish
+                    SUM(CASE WHEN pin_generated AND NOT pin_published
+                        THEN 1 ELSE 0 END) AS ready_to_publish
                 FROM products
                 """
             )

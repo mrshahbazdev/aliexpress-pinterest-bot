@@ -12,12 +12,11 @@ Provides a dashboard to:
 from __future__ import annotations
 
 import asyncio
-import base64
-import httpx
 import json
 import math
 import urllib.parse
 
+import httpx
 from flask import Flask, jsonify, redirect, request, url_for
 
 from ae_pinner.ai_generator import AIProvider, generate_pin_content

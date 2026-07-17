@@ -1,0 +1,17 @@
+# Example automation plan for ae-pinner
+# Usage: ae-pinner auto --plan examples/auto-plan.yaml
+
+pages: 3              # Number of pages to process
+page: 1               # Starting page number
+page_size: 12         # Products per page (max 12)
+ai: gemini            # AI provider: gemini or openai
+save: true            # Save fetched products to the database
+generate: true        # Generate AI Pinterest titles/descriptions
+publish: true         # Auto-publish generated pins to Pinterest
+dry_run: false        # Set to true to preview without creating pins
+page_delay: 3         # Seconds between pages
+pin_delay: 1.5        # Seconds between pin creations
+
+# Uncomment to run on a schedule:
+# interval_minutes: 60  # Repeat every N minutes (0 = run once)
+# max_runs: 5           # Stop after N repetitions
