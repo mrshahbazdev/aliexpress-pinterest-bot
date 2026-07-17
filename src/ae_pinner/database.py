@@ -294,6 +294,34 @@ class Database:
         finally:
             conn.close()
 
+    def search_products(
+        self, query: str, page: int = 1, per_page: int = 20
+    ) -> tuple[list[DBProduct], int]:
+        """Search products by title (case-insensitive LIKE)."""
+        conn = self._conn()
+        try:
+            cur = conn.cursor(dictionary=True)
+            like = f"%{query}%"
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM products WHERE title LIKE %s",
+                (like,),
+            )
+            total = cur.fetchone()["cnt"]
+
+            offset = (page - 1) * per_page
+            cur.execute(
+                "SELECT * FROM products WHERE title LIKE %s "
+                "ORDER BY created_at DESC LIMIT %s OFFSET %s",
+                (like, per_page, offset),
+            )
+            rows = cur.fetchall()
+            cur.close()
+
+            products = [self._row_to_dbproduct(r) for r in rows]
+            return products, total
+        finally:
+            conn.close()
+
     def get_product_by_item_id(self, item_id: str) -> DBProduct | None:
         """Get a single product by its AliExpress item_id."""
         conn = self._conn()

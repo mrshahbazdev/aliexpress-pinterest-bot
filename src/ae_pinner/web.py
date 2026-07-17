@@ -220,6 +220,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
        class="{{ 'active' if page_name == 'fetch' }}">Fetch Products</a>
     <a href="/products"
        class="{{ 'active' if page_name == 'products' }}">Saved ({{ saved_count }})</a>
+    <a href="/store"
+       class="{{ 'active' if page_name == 'store' }}">Store</a>
   </div>
 </nav>
 {% endif %}
@@ -1003,6 +1005,125 @@ function copyText(id){
 {% endblock %}
 """
 
+STORE_TPL = """
+{% extends "master" %}
+{% block content %}
+<div class="card">
+  <h2>AliExpress Store ({{ total }} products)</h2>
+  <form method="get" action="/store" style="margin-bottom:14px">
+    <div class="form-row">
+      <input type="text" name="q" value="{{ query }}" placeholder="Search products..."
+             style="flex:1;min-width:240px;background:#0a0a0f;border:1px solid #333;
+                    color:#e0e0e0;padding:8px 12px;border-radius:6px;font-size:13px">
+      <button type="submit" class="btn btn-red">Search</button>
+    </div>
+  </form>
+  {% if not products %}
+  <div class="empty">
+    <p>No products found{% if query %} for "{{ query }}"{% endif %}.</p>
+  </div>
+  {% else %}
+  <div class="pgrid">
+  {% for p in products %}
+    <div class="pcard">
+      <a href="/store/{{ p.item_id }}" style="text-decoration:none;color:inherit">
+        <img src="{{ p.image_url }}" alt="{{ p.title[:40] }}" loading="lazy">
+      </a>
+      <div class="body">
+        <a href="/store/{{ p.item_id }}" style="text-decoration:none;color:inherit">
+          <div class="ttl">{{ p.title }}</div>
+        </a>
+        <div class="prices">
+          <span class="price">{{ p.discount_price }}</span>
+          <span class="oprice">{{ p.original_price }}</span>
+          {% if p.discount_rate %}<span class="disc">{{ p.discount_rate }}% OFF</span>{% endif %}
+        </div>
+        <div class="meta">
+          <span>Sales: {{ p.sales_30day }}</span>
+          <span>Rating: {{ p.comment_score }}</span>
+        </div>
+        <div class="acts">
+          <a href="/store/{{ p.item_id }}" class="btn btn-red btn-sm">View</a>
+          {% if p.promo_url %}
+          <a href="{{ p.promo_url }}" target="_blank" class="btn btn-green btn-sm">Buy Now</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+  </div>
+  {% if total_pages > 1 %}
+  <div class="pagi">
+    {% for pg in range(1, total_pages + 1) %}
+    <a href="/store?q={{ query_encoded }}&page={{ pg }}"
+       class="{{ 'cur' if pg == current_page }}">{{ pg }}</a>
+    {% endfor %}
+  </div>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}
+"""
+
+STORE_DETAIL_TPL = """
+{% extends "master" %}
+{% block content %}
+<div style="margin-bottom:14px">
+  <a href="/store" class="btn btn-gray">&larr; Back to Store</a>
+</div>
+<div class="card">
+  <div style="display:grid;grid-template-columns:minmax(300px,1fr) 1fr;gap:24px">
+    {% if all_images|length > 1 %}
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <img id="mainImg" src="{{ p.image_url }}" alt="{{ p.title[:60] }}"
+           style="width:100%;border-radius:10px;border:1px solid #1e1e35;object-fit:cover;max-height:400px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap">
+        {% for img in all_images %}
+        <img src="{{ img }}" alt="Image {{ loop.index }}"
+             onclick="document.getElementById('mainImg').src=this.src"
+             style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid #1e1e35;cursor:pointer">
+        {% endfor %}
+      </div>
+    </div>
+    {% else %}
+    <div>
+      <img src="{{ p.image_url }}" alt="{{ p.title[:60] }}"
+           style="width:100%;border-radius:10px;border:1px solid #1e1e35;object-fit:cover;max-height:400px">
+    </div>
+    {% endif %}
+    <div>
+      <h2 style="font-size:22px;color:#e0e0e0;margin-bottom:12px;line-height:1.4">{{ p.title }}</h2>
+      <div class="prices" style="margin-bottom:16px">
+        <span class="price" style="font-size:26px">{{ p.discount_price }}</span>
+        <span class="oprice" style="font-size:16px">{{ p.original_price }}</span>
+        {% if p.discount_rate %}<span class="disc">{{ p.discount_rate }}% OFF</span>{% endif %}
+      </div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px">
+        <div style="background:#0a0a0f;border:1px solid #1e1e35;border-radius:8px;padding:10px 16px;text-align:center;min-width:100px">
+          <div style="font-size:18px;font-weight:700;color:#ff4757">{{ p.sales_30day }}</div>
+          <div style="font-size:11px;color:#666">Sales (30 day)</div>
+        </div>
+        <div style="background:#0a0a0f;border:1px solid #1e1e35;border-radius:8px;padding:10px 16px;text-align:center;min-width:100px">
+          <div style="font-size:18px;font-weight:700;color:#ff4757">{{ p.comment_score }}</div>
+          <div style="font-size:11px;color:#666">Rating</div>
+        </div>
+        <div style="background:#0a0a0f;border:1px solid #1e1e35;border-radius:8px;padding:10px 16px;text-align:center;min-width:100px">
+          <div style="font-size:18px;font-weight:700;color:#ff4757">{{ p.commission_rate }}%</div>
+          <div style="font-size:11px;color:#666">Commission</div>
+        </div>
+      </div>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:16px">
+        {% if p.promo_url %}
+        <a href="{{ p.promo_url }}" target="_blank" class="btn btn-green" style="font-size:14px">Buy Now on AliExpress</a>
+        {% endif %}
+        <a href="{{ p.item_url }}" target="_blank" class="btn btn-gray" style="font-size:14px">View on AliExpress</a>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+"""
+
 
 # ---------------------------------------------------------------------------
 # Template engine (inline Jinja2)
@@ -1016,6 +1137,8 @@ _TEMPLATES: dict[str, str] = {
     "fetch": FETCH_TPL,
     "products": PRODUCTS_TPL,
     "product_detail": PRODUCT_DETAIL_TPL,
+    "store": STORE_TPL,
+    "store_detail": STORE_DETAIL_TPL,
 }
 
 
@@ -1648,6 +1771,63 @@ def product_detail(item_id: str) -> str:
     )
 
 
+@app.route("/store")
+def store_page() -> str:
+    """Public storefront listing saved products with search and pagination."""
+    db = get_db()
+    page = int(request.args.get("page", 1))
+    per_page = 12
+    query = request.args.get("q", "").strip()
+
+    if query:
+        products, total = db.search_products(query, page=page, per_page=per_page)
+    else:
+        products, total = db.get_all_products(page=page, per_page=per_page)
+
+    total_pages = max(1, math.ceil(total / per_page))
+    return _render(
+        "store",
+        page_name="store",
+        products=products,
+        total=total,
+        query=query,
+        query_encoded=urllib.parse.quote(query),
+        current_page=page,
+        total_pages=total_pages,
+    )
+
+
+@app.route("/store/<item_id>")
+def store_detail(item_id: str) -> str:
+    """Public storefront product detail page."""
+    db = get_db()
+    p = db.get_product_by_item_id(item_id)
+    if not p:
+        return _render(
+            "store",
+            page_name="store",
+            products=[],
+            total=0,
+            query="",
+            query_encoded="",
+            current_page=1,
+            total_pages=1,
+            msg="Product not found",
+            msg_cls="err",
+        )
+
+    all_images = [i for i in p.all_images.split(",") if i] if p.all_images else []
+    if p.image_url and p.image_url not in all_images:
+        all_images.insert(0, p.image_url)
+
+    return _render(
+        "store_detail",
+        page_name="store",
+        p=p,
+        all_images=all_images,
+    )
+
+
 @app.route("/generate/<item_id>", methods=["POST"])
 def generate_single(item_id: str) -> str:
     db = get_db()
@@ -1918,6 +2098,45 @@ def api_delete_product(item_id: str):
     if not ok:
         return jsonify({"error": "not found"}), 404
     return jsonify({"deleted": item_id})
+
+
+@app.route("/api/store/products")
+def api_store_products():
+    """GET /api/store/products?page=1&per_page=20&q=search - Public storefront API."""
+    db = get_db()
+    page = int(request.args.get("page", 1))
+    per_page = int(request.args.get("per_page", 20))
+    query = request.args.get("q", "").strip()
+
+    if query:
+        products, total = db.search_products(query, page=page, per_page=per_page)
+    else:
+        products, total = db.get_all_products(page=page, per_page=per_page)
+
+    return jsonify(
+        {
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "query": query,
+            "products": [
+                {
+                    "item_id": p.item_id,
+                    "title": p.title,
+                    "image_url": p.image_url,
+                    "original_price": p.original_price,
+                    "discount_price": p.discount_price,
+                    "discount_rate": p.discount_rate,
+                    "sales_30day": p.sales_30day,
+                    "comment_score": p.comment_score,
+                    "commission_rate": p.commission_rate,
+                    "item_url": p.item_url,
+                    "promo_url": p.promo_url,
+                }
+                for p in products
+            ],
+        }
+    )
 
 
 @app.route("/api/fetch", methods=["POST"])
